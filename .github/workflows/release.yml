@@ -17,6 +17,7 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: nuget
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +33,7 @@ jobs:
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Test
-        run: dotnet test -c Release
+        run: dotnet test -c Release --blame-hang-timeout 5m
 
       - name: Pack
         run: dotnet pack src/Papira -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}

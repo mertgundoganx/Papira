@@ -326,34 +326,42 @@ public class RegressionTests
     }
 
     [Fact]
-    public async Task Registering_fonts_while_rendering_is_thread_safe()
+    public void Registering_fonts_while_rendering_is_thread_safe()
     {
         var font = LatoRegular();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var errors = 0;
 
-        var register = Task.Run(() =>
+        // Dedicated threads and fixed iteration counts: the test must not depend on thread-pool timing,
+        // which is unreliable on machines with few cores.
+        var threads = new List<Thread>
         {
-            while (!cts.IsCancellationRequested)
-                FontManager.RegisterFontWithCustomName("Race", font);
-        });
-
-        Parallel.For(0, 4, _ =>
-        {
-            while (!cts.IsCancellationRequested)
+            new(() =>
             {
-                try
-                {
-                    Generate(c => c.Text("race").FontFamily("Race"));
-                }
-                catch (Exception)
-                {
-                    Interlocked.Increment(ref errors);
-                }
-            }
-        });
+                for (var i = 0; i < 100; i++)
+                    FontManager.RegisterFontWithCustomName("Race", font);
+            }),
+        };
 
-        await register;
+        for (var t = 0; t < 4; t++)
+        {
+            threads.Add(new Thread(() =>
+            {
+                for (var i = 0; i < 50; i++)
+                {
+                    try
+                    {
+                        Generate(c => c.Text("race").FontFamily("Race"));
+                    }
+                    catch (Exception)
+                    {
+                        Interlocked.Increment(ref errors);
+                    }
+                }
+            }));
+        }
+
+        threads.ForEach(thread => thread.Start());
+        threads.ForEach(thread => thread.Join());
         Assert.Equal(0, errors);
     }
 

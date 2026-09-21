@@ -21,6 +21,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -41,12 +42,13 @@ jobs:
         run: dotnet build -c Release --no-restore
 
       - name: Test
-        run: dotnet test -c Release --no-build --verbosity normal
+        run: dotnet test -c Release --no-build --blame-hang-timeout 5m
 
   test-container:
     name: Test in container without fonts
     runs-on: ubuntu-latest
     container: mcr.microsoft.com/dotnet/sdk:10.0
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +56,7 @@ jobs:
         run: rm -rf /usr/share/fonts /usr/local/share/fonts
 
       - name: Test
-        run: dotnet test -c Release -f net10.0
+        run: dotnet test -c Release -f net10.0 --blame-hang-timeout 5m
 
       - name: Generate sample documents
         run: |
@@ -64,6 +66,7 @@ jobs:
   validate-output:
     name: Validate generated PDFs
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -94,6 +97,7 @@ jobs:
   pack:
     name: Pack
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: test
     steps:
       - uses: actions/checkout@v4
