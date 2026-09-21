@@ -9,9 +9,9 @@
 
 Papira builds PDF documents from C# code with a fluent layout API. It has no browser, no native libraries and no third-party packages: the PDF writer, TrueType parser, font subsetter, PNG/JPEG handling and the layout engine are all part of the library.
 
-- **Fast.** A 2-page invoice takes about 1.6 ms on one thread. On an 8-core Apple M2, Papira produces 3,000 to 3,800 invoices per second.
+- **Fast.** A 2-page invoice takes about 0.6 ms on one thread. On an 8-core Apple M2, Papira produces about 5,000 invoices per second.
 - **Uses every core.** Compression, font subsetting and image encoding run in parallel, and documents can be generated concurrently from many threads.
-- **Unicode text.** Fonts are embedded as subsets with a ToUnicode map, so text stays selectable and searchable. Characters such as ğ, ş, ı, İ, ₺ and € work out of the box.
+- **Typographic text.** Pair kerning from the font's GPOS or kern table, as in browsers and word processors. Fonts are embedded as subsets with a ToUnicode map, so text stays selectable and searchable. Characters such as ğ, ş, ı, İ, ₺ and € work out of the box.
 - **Same output everywhere.** The bundled Lato font is the default, so documents look the same on Windows, macOS and minimal Linux containers with no fonts installed.
 - **Free for any use.** MIT licensed, including commercial use.
 
@@ -162,7 +162,7 @@ dotnet run -c Release --project samples/Papira.Samples -- bench 5000
 
 Papira is young. These features are not implemented yet:
 
-- Kerning and ligatures. Glyphs are placed by their advance widths. Scripts that need complex shaping (Arabic, Indic scripts) are not supported.
+- Ligatures and complex shaping. Scripts that need it (Arabic, Indic scripts) are not supported yet.
 - Automatic font fallback per character. Glyphs missing from the chosen font render as the font's `.notdef` box.
 - Hyperlinks, bookmarks, forms, encryption and PDF/A.
 - CFF-based OpenType fonts (`.otf`).

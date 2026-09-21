@@ -72,6 +72,7 @@ internal sealed class TextElement : Element
     private ushort[] _glyphs = [];
     private int[] _codepoints = [];
     private float[] _advances = [];
+    private short[] _kerning = []; // adjustment after each glyph, in font units (already included in _advances)
     private int[] _spanOf = [];
     private int _length;
     private ResolvedTextStyle[] _styles = [];
@@ -120,6 +121,7 @@ internal sealed class TextElement : Element
             _glyphs = new ushort[capacity];
             _codepoints = new int[capacity];
             _advances = new float[capacity];
+            _kerning = new short[capacity];
             _spanOf = new int[capacity];
         }
 
@@ -128,6 +130,7 @@ internal sealed class TextElement : Element
         {
             var style = _styles[s];
             var font = style.Font.Font;
+            var spanStart = n;
 
             foreach (var rune in texts[s].EnumerateRunes())
             {
@@ -152,12 +155,36 @@ internal sealed class TextElement : Element
                 _glyphs[n] = glyph;
                 _codepoints[n] = cp;
                 _advances[n] = advance;
+                _kerning[n] = 0;
                 _spanOf[n] = s;
                 n++;
             }
+
+            ApplyKerning(style, spanStart, n);
         }
 
         _length = n;
+    }
+
+    /// <summary>Applies pair kerning between consecutive glyphs of one span (same font and size).</summary>
+    private void ApplyKerning(ResolvedTextStyle style, int start, int end)
+    {
+        var kerning = style.Font.Font.Kerning;
+        if (kerning.IsEmpty)
+            return;
+
+        for (var i = start; i + 1 < end; i++)
+        {
+            if (_codepoints[i] == '\n' || _codepoints[i + 1] == '\n')
+                continue;
+
+            var value = kerning.Get(_glyphs[i], _glyphs[i + 1]);
+            if (value == 0)
+                continue;
+
+            _kerning[i] = (short)Math.Clamp(value, short.MinValue, short.MaxValue);
+            _advances[i] += value * style.Scale;
+        }
     }
 
     private void EnsureLines(float maxWidth)
@@ -230,6 +257,10 @@ internal sealed class TextElement : Element
 
         for (var k = start; k < end; k++)
             width += _advances[k];
+
+        // The last glyph's kerning pairs it with the first glyph of the next line; it doesn't belong to this line.
+        if (end > start)
+            width -= _kerning[end - 1] * _styles[_spanOf[end - 1]].Scale;
 
         if (start == end)
         {
@@ -391,7 +422,7 @@ internal sealed class TextElement : Element
         for (var k = start; k < end; k++)
             width += _advances[k];
 
-        canvas.DrawGlyphs(style, x, baseline, _glyphs.AsSpan(start, end - start), _codepoints.AsSpan(start, end - start));
+        canvas.DrawGlyphs(style, x, baseline, _glyphs.AsSpan(start, end - start), _codepoints.AsSpan(start, end - start), _kerning.AsSpan(start, end - start));
         DrawDecorations(style, x, baseline, width, canvas);
         return width;
     }

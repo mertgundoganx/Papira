@@ -8,6 +8,14 @@ Until 1.0, minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Pair kerning from the OpenType GPOS `kern` feature (pair adjustment lookups, formats 1 and 2, including extension lookups) with a fallback to the legacy `kern` table. Kerned text is written with `TJ` position adjustments, so it stays selectable and searchable.
+
+### Changed
+
+- The sample benchmark warms up for two seconds before measuring, so the numbers reflect fully optimized code. The README now reports about 0.6 ms per invoice on one thread.
+
 ## [0.1.0] - 2026-09-22
 
 First public release.

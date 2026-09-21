@@ -67,7 +67,7 @@ internal sealed partial class PdfInspector
 
     /// <summary>Content streams of the pages, in page order.</summary>
     public IReadOnlyList<string> PageContents() =>
-        Streams().Where(s => s.Contains(" Tj") || s.Contains(" re f") || s.Contains(" Do")).ToList();
+        Streams().Where(s => s.Contains(" Tj") || s.Contains(" TJ") || s.Contains(" re f") || s.Contains(" Do")).ToList();
 
     /// <summary>
     /// Text of every glyph run (one line per run), decoded through the ToUnicode maps.
@@ -94,9 +94,14 @@ internal sealed partial class PdfInspector
         {
             foreach (Match run in GlyphRunRegex().Matches(page))
             {
-                var hex = run.Groups[1].Value;
-                for (var i = 0; i + 4 <= hex.Length; i += 4)
-                    builder.Append(map.TryGetValue(hex.Substring(i, 4), out var text) ? text : "�");
+                // A run is either "<hex> Tj" or a kerned "[<hex> n <hex> ...] TJ".
+                foreach (Match segment in HexStringRegex().Matches(run.Value))
+                {
+                    var hex = segment.Groups[1].Value;
+                    for (var i = 0; i + 4 <= hex.Length; i += 4)
+                        builder.Append(map.TryGetValue(hex.Substring(i, 4), out var text) ? text : "\uFFFD");
+                }
+
                 builder.Append('\n');
             }
         }
@@ -107,8 +112,11 @@ internal sealed partial class PdfInspector
     [GeneratedRegex(@"<([0-9A-F]{4})><([0-9A-F]+)>")]
     private static partial Regex CMapEntryRegex();
 
-    [GeneratedRegex(@"<([0-9A-F]*)> Tj")]
+    [GeneratedRegex(@"<[0-9A-F]*> Tj|\[[^\]]*\] TJ")]
     private static partial Regex GlyphRunRegex();
+
+    [GeneratedRegex(@"<([0-9A-F]*)>")]
+    private static partial Regex HexStringRegex();
 
     [GeneratedRegex(@"/Type/Page/")]
     private static partial Regex PageRegex();

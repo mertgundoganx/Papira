@@ -20,6 +20,7 @@ internal sealed class TrueTypeFont
     private readonly ushort[] _advances;
     private readonly ushort[] _bmpGlyphs;
     private readonly Dictionary<int, ushort>? _supplementaryGlyphs;
+    private readonly Lazy<KerningTable> _kerning;
 
     public byte[] Data { get; }
     public FontFaceInfo Info { get; }
@@ -117,7 +118,11 @@ internal sealed class TrueTypeFont
         _advances = ReadAdvances(data, hmtx, Math.Min(numberOfHMetrics, hmtxLength / 4), GlyphCount);
         TryTable("cmap", out var cmap, out var cmapLength);
         (_bmpGlyphs, _supplementaryGlyphs) = ReadCharacterMap(data, cmap, cmapLength);
+        _kerning = new Lazy<KerningTable>(() => KerningTable.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
     }
+
+    /// <summary>Pair kerning, loaded on first use.</summary>
+    public KerningTable Kerning => _kerning.Value;
 
     /// <summary>Loads every face in a font file (.ttf, or all faces of a .ttc collection).</summary>
     public static IReadOnlyList<TrueTypeFont> LoadAll(byte[] data)
