@@ -20,6 +20,7 @@ public enum FontWeight
 public sealed record TextStyle
 {
     internal string? Family { get; init; }
+    internal IReadOnlyList<string>? FallbackFamilies { get; init; }
     internal float? Size { get; init; }
     internal FontWeight? Weight { get; init; }
     internal bool? IsItalic { get; init; }
@@ -45,7 +46,12 @@ public sealed record TextStyle
         IsStrikethrough = false,
     };
 
-    public TextStyle FontFamily(string family) => this with { Family = family };
+    /// <summary>
+    /// Sets the font family. Characters missing from it are taken from <paramref name="fallbacks"/> in order,
+    /// then from <see cref="FontManager.FallbackFontFamilies"/> and finally from any other registered font.
+    /// </summary>
+    public TextStyle FontFamily(string family, params string[] fallbacks) =>
+        this with { Family = family, FallbackFamilies = fallbacks.Length > 0 ? fallbacks.ToArray() : FallbackFamilies };
     public TextStyle FontSize(float size) => this with { Size = size > 0 ? size : throw new ArgumentOutOfRangeException(nameof(size)) };
     public TextStyle FontWeight(FontWeight weight) => this with { Weight = weight };
     public TextStyle Thin() => FontWeight(Papira.FontWeight.Thin);
@@ -76,6 +82,7 @@ public sealed record TextStyle
         return new TextStyle
         {
             Family = Family ?? parent.Family,
+            FallbackFamilies = FallbackFamilies ?? parent.FallbackFamilies,
             Size = Size ?? parent.Size,
             Weight = Weight ?? parent.Weight,
             IsItalic = IsItalic ?? parent.IsItalic,

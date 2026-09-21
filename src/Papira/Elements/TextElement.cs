@@ -8,8 +8,14 @@ namespace Papira.Elements;
 internal sealed class ResolvedTextStyle
 {
     public ResolvedTextStyle(TextStyle style)
+        : this(style, FontManager.Resolve(style.Family, style.Weight ?? FontWeight.Normal, style.IsItalic ?? false))
     {
-        Font = FontManager.Resolve(style.Family, style.Weight ?? FontWeight.Normal, style.IsItalic ?? false);
+    }
+
+    /// <summary>The style rendered with a specific font face, e.g. a fallback font.</summary>
+    public ResolvedTextStyle(TextStyle style, ResolvedFont resolvedFont)
+    {
+        Font = resolvedFont;
         Size = style.Size ?? 12;
         Color = style.TextColor ?? Colors.Black;
         LetterSpacing = style.Spacing ?? 0;
@@ -73,9 +79,10 @@ internal sealed class TextElement : Element
     private int[] _codepoints = [];
     private float[] _advances = [];
     private short[] _kerning = []; // adjustment after each glyph, in font units (already included in _advances)
-    private int[] _spanOf = [];
+    private int[] _styleOf = [];   // index into _styles; differs from the span's style where a fallback font is used
     private int _length;
-    private ResolvedTextStyle[] _styles = [];
+    private readonly List<ResolvedTextStyle> _styles = [];
+    private int _lastSpanStyle;
     private TextStyle? _shapedForStyle;
     private (int Page, int Total) _shapedForPage = (-1, -1);
     private bool _hasDynamic;
@@ -101,7 +108,7 @@ internal sealed class TextElement : Element
         _linesWidth = -1;
 
         var paragraphStyle = ParagraphStyle.InheritFrom(context.DefaultStyle);
-        _styles = new ResolvedTextStyle[Spans.Count];
+        _styles.Clear();
         _hasDynamic = false;
 
         var texts = new string[Spans.Count];
@@ -113,7 +120,6 @@ internal sealed class TextElement : Element
                 _hasDynamic = true;
             texts[s] = span.DynamicText?.Invoke(context) ?? span.Text ?? string.Empty;
             capacity += texts[s].Length;
-            _styles[s] = new ResolvedTextStyle(span.Style.InheritFrom(paragraphStyle));
         }
 
         if (_glyphs.Length < capacity)
@@ -122,60 +128,107 @@ internal sealed class TextElement : Element
             _codepoints = new int[capacity];
             _advances = new float[capacity];
             _kerning = new short[capacity];
-            _spanOf = new int[capacity];
+            _styleOf = new int[capacity];
         }
 
         var n = 0;
         for (var s = 0; s < Spans.Count; s++)
         {
-            var style = _styles[s];
-            var font = style.Font.Font;
+            var textStyle = Spans[s].Style.InheritFrom(paragraphStyle);
+            var primary = new ResolvedTextStyle(textStyle);
+            var primaryIndex = _styles.Count;
+            _styles.Add(primary);
+            _lastSpanStyle = primaryIndex;
+
+            // Fallback fonts are prepared only when the span contains a character its font lacks.
+            List<int>? fallbacks = null;
             var spanStart = n;
 
             foreach (var rune in texts[s].EnumerateRunes())
             {
                 var cp = rune.Value;
-                switch (cp)
-                {
-                    case '\r' or 0xAD or 0x200B:
-                        continue; // CR, soft hyphen and zero-width space are not rendered
-                    case '\t':
-                        cp = ' ';
-                        break;
-                }
+                if (IsIgnorable(cp))
+                    continue;
+                if (cp == '\t')
+                    cp = ' ';
 
                 ushort glyph = 0;
                 float advance = 0;
+                var styleIndex = primaryIndex;
+
                 if (cp != '\n')
                 {
-                    glyph = font.GetGlyph(cp);
-                    advance = font.GetAdvance(glyph) * style.Scale + style.LetterSpacing;
+                    glyph = primary.Font.Font.GetGlyph(cp);
+                    if (glyph == 0)
+                    {
+                        fallbacks ??= PrepareFallbacks(textStyle, primary);
+                        foreach (var candidate in fallbacks)
+                        {
+                            var fallbackGlyph = _styles[candidate].Font.Font.GetGlyph(cp);
+                            if (fallbackGlyph != 0)
+                            {
+                                glyph = fallbackGlyph;
+                                styleIndex = candidate;
+                                break;
+                            }
+                        }
+                    }
+
+                    var style = _styles[styleIndex];
+                    advance = style.Font.Font.GetAdvance(glyph) * style.Scale + style.LetterSpacing;
                 }
 
                 _glyphs[n] = glyph;
                 _codepoints[n] = cp;
                 _advances[n] = advance;
                 _kerning[n] = 0;
-                _spanOf[n] = s;
+                _styleOf[n] = styleIndex;
                 n++;
             }
 
-            ApplyKerning(style, spanStart, n);
+            ApplyKerning(spanStart, n);
         }
 
         _length = n;
     }
 
-    /// <summary>Applies pair kerning between consecutive glyphs of one span (same font and size).</summary>
-    private void ApplyKerning(ResolvedTextStyle style, int start, int end)
-    {
-        var kerning = style.Font.Font.Kerning;
-        if (kerning.IsEmpty)
-            return;
+    /// <summary>
+    /// Characters that are not drawn: carriage return, soft hyphen, zero-width space and joiners,
+    /// word joiner, variation selectors (e.g. the emoji presentation selector) and the byte order mark.
+    /// </summary>
+    private static bool IsIgnorable(int cp) =>
+        cp is '\r' or 0xAD or (>= 0x200B and <= 0x200D) or (>= 0x2060 and <= 0x2064) or (>= 0xFE00 and <= 0xFE0F) or 0xFEFF;
 
+    /// <summary>Adds a style variant for every usable fallback font of the span and returns their indexes.</summary>
+    private List<int> PrepareFallbacks(TextStyle textStyle, ResolvedTextStyle primary)
+    {
+        var result = new List<int>();
+        var weight = textStyle.Weight ?? FontWeight.Normal;
+        var italic = textStyle.IsItalic ?? false;
+
+        foreach (var family in FontManager.FallbackCandidates(textStyle))
+        {
+            if (!FontManager.TryResolveFamily(family, weight, italic, out var font) || ReferenceEquals(font.Font, primary.Font.Font))
+                continue;
+
+            result.Add(_styles.Count);
+            _styles.Add(new ResolvedTextStyle(textStyle, font));
+        }
+
+        return result;
+    }
+
+    /// <summary>Applies pair kerning between consecutive glyphs of one span that use the same font.</summary>
+    private void ApplyKerning(int start, int end)
+    {
         for (var i = start; i + 1 < end; i++)
         {
-            if (_codepoints[i] == '\n' || _codepoints[i + 1] == '\n')
+            if (_styleOf[i] != _styleOf[i + 1] || _codepoints[i] == '\n' || _codepoints[i + 1] == '\n')
+                continue;
+
+            var style = _styles[_styleOf[i]];
+            var kerning = style.Font.Font.Kerning;
+            if (kerning.IsEmpty)
                 continue;
 
             var value = kerning.Get(_glyphs[i], _glyphs[i + 1]);
@@ -260,12 +313,12 @@ internal sealed class TextElement : Element
 
         // The last glyph's kerning pairs it with the first glyph of the next line; it doesn't belong to this line.
         if (end > start)
-            width -= _kerning[end - 1] * _styles[_spanOf[end - 1]].Scale;
+            width -= _kerning[end - 1] * _styles[_styleOf[end - 1]].Scale;
 
         if (start == end)
         {
             // Empty line: size it with the style of the character at that position (or the last span).
-            var style = start < _length ? _styles[_spanOf[start]] : _styles[^1];
+            var style = start < _length ? _styles[_styleOf[start]] : _styles[_lastSpanStyle];
             (ascent, descent, height) = (style.Ascent, style.Descent, style.LineHeight);
         }
         else
@@ -273,7 +326,7 @@ internal sealed class TextElement : Element
             var previous = -1;
             for (var k = start; k < end; k++)
             {
-                var s = _spanOf[k];
+                var s = _styleOf[k];
                 if (s == previous)
                     continue;
                 previous = s;
@@ -390,14 +443,14 @@ internal sealed class TextElement : Element
         for (var k = line.Start; k <= line.End; k++)
         {
             var boundary = k == line.End
-                || _spanOf[k] != _spanOf[runStart]
+                || _styleOf[k] != _styleOf[runStart]
                 || (spaceStretch > 0 && _codepoints[k] == ' ');
 
             if (boundary)
             {
                 if (k > runStart)
                 {
-                    var style = _styles[_spanOf[runStart]];
+                    var style = _styles[_styleOf[runStart]];
                     var runWidth = DrawRun(style, runStart, k, runX, baseline, canvas);
                     runX += runWidth;
                 }
@@ -407,7 +460,7 @@ internal sealed class TextElement : Element
                 // In justified text every space becomes its own positioned gap.
                 if (spaceStretch > 0 && k < line.End && _codepoints[k] == ' ')
                 {
-                    var style = _styles[_spanOf[k]];
+                    var style = _styles[_styleOf[k]];
                     DrawDecorations(style, runX, baseline, _advances[k] + spaceStretch, canvas);
                     runX += _advances[k] + spaceStretch;
                     runStart = k + 1;

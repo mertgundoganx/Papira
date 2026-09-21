@@ -121,6 +121,20 @@ container.Text("Hello").FontFamily("Inter").SemiBold();
 
 Font families are looked up in this order: fonts you registered, then fonts installed on the machine, then the default Lato. System fonts are indexed once, the first time they're needed. If a family has no bold or italic face, Papira simulates it.
 
+### Fallback fonts
+
+Characters that a font doesn't contain (for example Chinese, Arabic or symbols in a customer name) are taken from fallback fonts, character by character:
+
+```csharp
+// Per style: tried in order for characters "Inter" lacks.
+container.Text(customerName).FontFamily("Inter", "Noto Sans SC", "Noto Sans Arabic");
+
+// For all documents.
+FontManager.FallbackFontFamilies = ["Noto Sans SC", "Noto Sans Symbols"];
+```
+
+After the style's fallbacks and the global list, every other registered font is tried, so registering a font is often enough. Characters found in no font are drawn as the font's `.notdef` box.
+
 TrueType-outline fonts (`.ttf`, `.ttc`) are supported. CFF-based `.otf` fonts are not supported yet.
 
 ## Images
@@ -162,8 +176,8 @@ dotnet run -c Release --project samples/Papira.Samples -- bench 5000
 
 Papira is young. These features are not implemented yet:
 
-- Ligatures and complex shaping. Scripts that need it (Arabic, Indic scripts) are not supported yet.
-- Automatic font fallback per character. Glyphs missing from the chosen font render as the font's `.notdef` box.
+- Ligatures and complex shaping. Scripts that need it (Arabic, Indic scripts) are not supported yet, and right-to-left text is not reordered.
+- Color emoji. Emoji fonts that store bitmaps or color layers (Apple Color Emoji, Noto Color Emoji) are not supported; monochrome outline fonts such as Noto Emoji work.
 - Hyperlinks, bookmarks, forms, encryption and PDF/A.
 - CFF-based OpenType fonts (`.otf`).
 

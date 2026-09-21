@@ -179,7 +179,9 @@ public sealed class TextSpanDescriptor
     }
 
     public TextSpanDescriptor Style(TextStyle style) => Update(s => style.InheritFrom(s));
-    public TextSpanDescriptor FontFamily(string family) => Update(s => s.FontFamily(family));
+
+    /// <summary>Sets the font family, with optional fallback families for characters it lacks.</summary>
+    public TextSpanDescriptor FontFamily(string family, params string[] fallbacks) => Update(s => s.FontFamily(family, fallbacks));
     public TextSpanDescriptor FontSize(float size) => Update(s => s.FontSize(size));
     public TextSpanDescriptor FontColor(Color color) => Update(s => s.FontColor(color));
     public TextSpanDescriptor FontWeight(FontWeight weight) => Update(s => s.FontWeight(weight));

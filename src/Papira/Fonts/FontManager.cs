@@ -16,12 +16,14 @@ public static class FontManager
     private static readonly object RegistrationLock = new();
     private static readonly object SystemScanLock = new();
     private static readonly ConcurrentDictionary<(string Family, int Weight, bool Italic), ResolvedFont> ResolveCache = new();
+    private static readonly ConcurrentDictionary<(string Family, int Weight, bool Italic), ResolvedFont?> ExactCache = new();
 
     // Replaced as a whole on every change; readers never see a collection being modified.
     private static Dictionary<string, FontSource[]> _registered = new(StringComparer.OrdinalIgnoreCase);
     private static Dictionary<string, FontSource[]>? _system;
     private static int _version;
     private static volatile bool _useSystemFonts = true;
+    private static string[] _fallbackFamilies = [];
 
     static FontManager()
     {
@@ -48,6 +50,17 @@ public static class FontManager
             _useSystemFonts = value;
             Invalidate();
         }
+    }
+
+    /// <summary>
+    /// Families used, in order, for characters missing from a text's own font and its fallbacks
+    /// (for example <c>["Noto Sans Arabic", "Noto Sans SC"]</c>). Registered fonts are tried after these.
+    /// Families must be registered or installed on the machine.
+    /// </summary>
+    public static IReadOnlyList<string> FallbackFontFamilies
+    {
+        get => Volatile.Read(ref _fallbackFamilies);
+        set => Volatile.Write(ref _fallbackFamilies, value?.ToArray() ?? []);
     }
 
     /// <summary>Registers every face of a .ttf/.ttc file.</summary>
@@ -133,6 +146,53 @@ public static class FontManager
     {
         Interlocked.Increment(ref _version);
         ResolveCache.Clear();
+        ExactCache.Clear();
+    }
+
+    /// <summary>
+    /// Fallback families for a style, in priority order: the style's own fallbacks, the global fallbacks,
+    /// then every other registered family. The style's primary family is excluded.
+    /// </summary>
+    internal static IEnumerable<string> FallbackCandidates(TextStyle style)
+    {
+        var primary = style.Family ?? DefaultFontFamily;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { primary };
+        var ordered = (style.FallbackFamilies ?? []).Concat(FallbackFontFamilies).Concat(Volatile.Read(ref _registered).Keys);
+
+        foreach (var family in ordered)
+        {
+            if (seen.Add(family))
+                yield return family;
+        }
+    }
+
+    /// <summary>Resolves a family that must exist (registered or installed); unlike <see cref="Resolve"/>, never substitutes the default font.</summary>
+    internal static bool TryResolveFamily(string family, FontWeight weight, bool italic, out ResolvedFont resolved)
+    {
+        var key = (family, (int)weight, italic);
+        if (!ExactCache.TryGetValue(key, out var cached))
+        {
+            var version = Volatile.Read(ref _version);
+            cached = ResolveExact(family, (int)weight, italic);
+            if (Volatile.Read(ref _version) == version)
+            {
+                ExactCache[key] = cached;
+                if (Volatile.Read(ref _version) != version)
+                    ExactCache.TryRemove(key, out _);
+            }
+        }
+
+        resolved = cached ?? default;
+        return cached != null;
+    }
+
+    private static ResolvedFont? ResolveExact(string family, int weight, bool italic)
+    {
+        Volatile.Read(ref _registered).TryGetValue(family, out var candidates);
+        if (candidates == null && UseSystemFonts)
+            GetSystemFonts().TryGetValue(family, out candidates);
+
+        return candidates != null && TryPick(candidates, weight, italic, out var resolved) ? resolved : null;
     }
 
     internal static ResolvedFont Resolve(string? family, FontWeight weight, bool italic)
