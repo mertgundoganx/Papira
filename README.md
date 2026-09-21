@@ -89,10 +89,27 @@ Content flows across pages automatically. Table headers repeat on every page, an
 | Positioning | `AlignLeft/Center/Right`, `AlignTop/Middle/Bottom` |
 | Paging | `PageBreak`, `ShowEntire` (never split), `EnsureSpace(minHeight)` (keep a heading with the content that follows) |
 | Page | `Size`, `Margin*`, `PageColor`, `Header`/`Content`/`Footer`, `Background`/`Foreground` full-page layers (for example watermarks), several `Page(...)` sections with different setups |
+| Navigation | `Hyperlink(url)`, `Section(name)` with `SectionLink(name)`, `Bookmark(title, level)` for the outline panel |
 | Images | `Image(...)` with `FitWidth` (default), `FitHeight`, `FitArea`. JPEG and PNG (all color types and bit depths, transparency, interlacing) |
 | Reuse | `Element(c => ...)`, `Component(IComponent)`, `DefaultTextStyle(...)` on the document, a page or any container |
 
 All sizes are in points (1/72 inch). Use `Unit.Millimetre(...)`, `Unit.Centimetre(...)` or `Unit.Inch(...)` to convert.
+
+### Links and bookmarks
+
+```csharp
+container.Hyperlink("https://example.com").Text("Visit our website").Underline();
+
+// Jump inside the document, also to later pages.
+container.SectionLink("totals").Text("See totals");
+container.Section("totals").Text("Totals").Bold();
+
+// Entries in the bookmarks panel of PDF viewers; level 1 nests under the previous level 0 entry.
+column.Item().Bookmark("Invoice").Text("Invoice").FontSize(20);
+column.Item().Bookmark("Line items", level: 1).Table(...);
+```
+
+Links must be absolute URIs with a scheme (`https:`, `mailto:`, `tel:` …); `javascript:` and `data:` links are rejected.
 
 ### Reusable components
 
@@ -178,7 +195,7 @@ Papira is young. These features are not implemented yet:
 
 - Ligatures and complex shaping. Scripts that need it (Arabic, Indic scripts) are not supported yet, and right-to-left text is not reordered.
 - Color emoji. Emoji fonts that store bitmaps or color layers (Apple Color Emoji, Noto Color Emoji) are not supported; monochrome outline fonts such as Noto Emoji work.
-- Hyperlinks, bookmarks, forms, encryption and PDF/A.
+- Forms, encryption and PDF/A.
 - CFF-based OpenType fonts (`.otf`).
 
 Contributions are welcome. See the [issues](https://github.com/mertgundoganx/Papira/issues).

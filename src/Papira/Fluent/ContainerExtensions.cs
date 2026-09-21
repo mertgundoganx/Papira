@@ -151,6 +151,53 @@ public static class ContainerExtensions
 
     public static void PageBreak(this IContainer container) => container.Assign(new PageBreakElement());
 
+    // ---- Navigation ------------------------------------------------------------------------------
+
+    private static readonly string[] BlockedSchemes = ["javascript", "vbscript", "data"];
+
+    /// <summary>
+    /// Makes the content a link to <paramref name="url"/> (an absolute URI such as <c>https://…</c>, <c>mailto:</c> or <c>tel:</c>).
+    /// If the content is split across pages, each part is clickable.
+    /// </summary>
+    public static IContainer Hyperlink(this IContainer container, string url)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(url);
+
+        // Require an explicit scheme: on Unix, .NET would otherwise accept "/path" as a file URI.
+        var colon = url.IndexOf(':', StringComparison.Ordinal);
+        if (colon <= 0 || !Uri.CheckSchemeName(url[..colon]) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            throw new ArgumentException($"'{url}' is not an absolute URI with a scheme, such as https://example.com.", nameof(url));
+        if (BlockedSchemes.Contains(uri.Scheme, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException($"Links with the '{uri.Scheme}:' scheme are not allowed.", nameof(url));
+
+        return container.Assign(LinkElement.ToUri(uri.AbsoluteUri));
+    }
+
+    /// <summary>Marks where the content starts, so <see cref="SectionLink"/> can jump to it. The first section with a name wins.</summary>
+    public static IContainer Section(this IContainer container, string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return container.Assign(new SectionElement(name));
+    }
+
+    /// <summary>Makes the content a link to the <see cref="Section"/> with the given name. Links to unknown sections are ignored.</summary>
+    public static IContainer SectionLink(this IContainer container, string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return container.Assign(LinkElement.ToSection(name));
+    }
+
+    /// <summary>
+    /// Adds an entry to the document outline (the bookmarks panel of PDF viewers) that jumps to the content.
+    /// <paramref name="level"/> 0 is a top-level entry; 1 nests under the previous level-0 entry, and so on.
+    /// </summary>
+    public static IContainer Bookmark(this IContainer container, string title, int level = 0)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        ArgumentOutOfRangeException.ThrowIfNegative(level);
+        return container.Assign(new BookmarkElement(title, level));
+    }
+
     // ---- Text style ------------------------------------------------------------------------------
 
     public static IContainer DefaultTextStyle(this IContainer container, TextStyle style) =>

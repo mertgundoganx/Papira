@@ -39,7 +39,7 @@ public static class FeaturesDocument
                 {
                     column.Spacing(14);
 
-                    column.Item().Text("1. Yazı stilleri").FontSize(14).Bold();
+                    column.Item().Bookmark("1. Yazı stilleri").Text("1. Yazı stilleri").FontSize(14).Bold();
                     column.Item().Text(t =>
                     {
                         t.Span("Normal, ");
@@ -54,14 +54,15 @@ public static class FeaturesDocument
                         t.Span("Türkçe: ĞÜŞİÖÇ ğüşıöç — “tırnak” ‘işaretleri’ … €₺");
                     });
                     column.Item().Text("Sistem fontu (Arial, yüklüyse; değilse Lato'ya düşer): Hızlı kahverengi tilki.").FontFamily("Arial");
+                    column.Item().Hyperlink("https://github.com/mertgundoganx/Papira").Text("Papira GitHub sayfası").FontColor(Colors.Blue).Underline();
 
-                    column.Item().Text("2. Hizalama").FontSize(14).Bold();
+                    column.Item().Bookmark("2. Hizalama").Text("2. Hizalama").FontSize(14).Bold();
                     column.Item().Text(Lorem).AlignLeft();
                     column.Item().Text(Lorem).AlignCenter();
                     column.Item().Text(Lorem).AlignRight();
                     column.Item().Text(Lorem + Lorem).Justify();
 
-                    column.Item().Text("3. Görseller").FontSize(14).Bold();
+                    column.Item().Bookmark("3. Görseller").Text("3. Görseller").FontSize(14).Bold();
                     column.Item().Row(row =>
                     {
                         row.Spacing(10);
@@ -72,7 +73,7 @@ public static class FeaturesDocument
                     });
                     column.Item().Text("Şeffaf PNG (yumuşak kenarlı daire), opak PNG, JPEG ve 4-bit paletli şeffaf PNG.").FontSize(9).Italic();
 
-                    column.Item().EnsureSpace(100).Text("4. Kutular ve kenarlıklar").FontSize(14).Bold();
+                    column.Item().EnsureSpace(100).Bookmark("4. Kutular ve kenarlıklar").Text("4. Kutular ve kenarlıklar").FontSize(14).Bold();
                     column.Item().Row(row =>
                     {
                         row.Spacing(10);
@@ -85,10 +86,11 @@ public static class FeaturesDocument
 
                     column.Item().PageBreak();
 
-                    column.Item().Text("5. Sayfalara bölünen uzun metin").FontSize(14).Bold();
+                    column.Item().Bookmark("5. Sayfalara bölünen uzun metin").Text("5. Sayfalara bölünen uzun metin").FontSize(14).Bold();
+                    column.Item().SectionLink("table").Text("Bu bölümü atlayıp tabloya git →").FontColor(Colors.Blue).Underline();
                     column.Item().Text(string.Concat(Enumerable.Repeat(Lorem, 40))).Justify().LineHeight(1.5f);
 
-                    column.Item().EnsureSpace(120).Text("6. Sayfalara bölünen tablo (başlık her sayfada tekrarlanır)").FontSize(14).Bold();
+                    column.Item().EnsureSpace(120).Section("table").Bookmark("6. Sayfalara bölünen tablo").Text("6. Sayfalara bölünen tablo (başlık her sayfada tekrarlanır)").FontSize(14).Bold();
                     column.Item().Table(table =>
                     {
                         table.ColumnsDefinition(c =>
@@ -121,7 +123,7 @@ public static class FeaturesDocument
                 page.Margin(30);
                 page.PageColor(Colors.Grey.Lighten5);
                 page.Background().AlignCenter().AlignMiddle().Text("TASLAK").FontSize(72).Bold().FontColor(Colors.Grey.Lighten2);
-                page.Content().AlignCenter().AlignMiddle().Text(t =>
+                page.Content().Bookmark("Yatay A5 bölümü").AlignCenter().AlignMiddle().Text(t =>
                 {
                     t.AlignCenter();
                     t.Line("Yatay A5 bölümü").FontSize(24).Bold();

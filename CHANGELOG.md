@@ -10,6 +10,7 @@ Until 1.0, minor versions may contain breaking changes.
 
 ### Added
 
+- Hyperlinks (`Hyperlink`), internal links to named sections (`Section`, `SectionLink`) and a document outline (`Bookmark`) shown in the bookmarks panel of PDF viewers. Links on content split across pages are clickable on every page.
 - Per-character font fallback: `FontFamily(family, params fallbacks)`, the global `FontManager.FallbackFontFamilies` list, and automatic use of other registered fonts for characters the primary font lacks.
 - Invisible formatting characters (zero-width joiners, variation selectors, byte order mark) are no longer drawn as `.notdef` boxes.
 - Pair kerning from the OpenType GPOS `kern` feature (pair adjustment lookups, formats 1 and 2, including extension lookups) with a fallback to the legacy `kern` table. Kerned text is written with `TJ` position adjustments, so it stays selectable and searchable.

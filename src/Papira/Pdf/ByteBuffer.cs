@@ -141,6 +141,32 @@ internal sealed class ByteBuffer : IDisposable
         return Byte((byte)'>');
     }
 
+    /// <summary>
+    /// Writes a literal string for byte-string values such as URIs. Characters outside printable ASCII
+    /// are percent-encoded as UTF-8; parentheses and backslashes are escaped.
+    /// </summary>
+    public ByteBuffer AsciiString(string value)
+    {
+        Byte((byte)'(');
+        Span<byte> utf8 = stackalloc byte[4];
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (rune.Value is >= 0x20 and < 0x7F)
+            {
+                if (rune.Value is '(' or ')' or '\\')
+                    Byte((byte)'\\');
+                Byte((byte)rune.Value);
+                continue;
+            }
+
+            var count = rune.EncodeToUtf8(utf8);
+            for (var i = 0; i < count; i++)
+                Byte((byte)'%').Hex8(utf8[i]);
+        }
+
+        return Byte((byte)')');
+    }
+
     public void CopyTo(Stream stream) => stream.Write(_buffer, 0, _length);
 
     public byte[] ToArray() => Span.ToArray();

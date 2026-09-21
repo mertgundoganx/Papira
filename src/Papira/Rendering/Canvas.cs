@@ -26,6 +26,9 @@ internal sealed class Canvas(DocumentResources resources)
 
     public DocumentResources Resources => resources;
 
+    /// <summary>Converts a point of the current (translated) layout coordinates to PDF page coordinates.</summary>
+    public (float X, float Y) ToPdf(float x, float y) => (PdfX(x), PdfY(y));
+
     public void BeginPage(ByteBuffer output, float pageHeight)
     {
         _out = output;
