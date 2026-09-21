@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest a new feature or API.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the document you are trying to build and what is missing.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      render: csharp
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you tried

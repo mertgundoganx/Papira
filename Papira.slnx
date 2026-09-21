@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Papira.Samples/Papira.Samples.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Papira/Papira.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Papira.Tests/Papira.Tests.csproj" />
+  </Folder>
+</Solution>

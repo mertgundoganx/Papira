@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Test
+        run: dotnet test -c Release --no-build --verbosity normal
+
+  test-container:
+    name: Test in container without fonts
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/dotnet/sdk:10.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove any system fonts
+        run: rm -rf /usr/share/fonts /usr/local/share/fonts
+
+      - name: Test
+        run: dotnet test -c Release -f net10.0
+
+      - name: Generate sample documents
+        run: |
+          dotnet run -c Release --project samples/Papira.Samples -- invoice
+          dotnet run -c Release --project samples/Papira.Samples -- features
+
+  validate-output:
+    name: Validate generated PDFs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install qpdf
+        run: sudo apt-get update && sudo apt-get install -y qpdf
+
+      - name: Generate sample documents
+        run: |
+          dotnet run -c Release --project samples/Papira.Samples -- invoice
+          dotnet run -c Release --project samples/Papira.Samples -- features
+
+      - name: Check PDF structure with qpdf
+        run: |
+          for f in samples/Papira.Samples/bin/Release/net10.0/output/*.pdf; do
+            echo "Checking $f"
+            qpdf --check "$f"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sample-pdfs
+          path: samples/Papira.Samples/bin/Release/net10.0/output/*.pdf
+
+  pack:
+    name: Pack
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Pack
+        run: dotnet pack src/Papira -c Release -o artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: artifacts/*
