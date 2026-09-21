@@ -86,7 +86,7 @@ jobs:
             qpdf --check "$f"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sample-pdfs
           path: samples/Papira.Samples/bin/Release/net10.0/output/*.pdf
@@ -107,7 +107,7 @@ jobs:
       - name: Pack
         run: dotnet pack src/Papira -c Release -o artifacts
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nuget-package
           path: artifacts/*
