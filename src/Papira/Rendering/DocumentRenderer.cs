@@ -16,10 +16,11 @@ namespace Papira.Rendering;
 /// </summary>
 internal static class DocumentRenderer
 {
-    private sealed class PageOutput(PageSize size, ByteBuffer content) : IDisposable
+    private sealed class PageOutput(PageSize size, ByteBuffer content, LinkArea[] links) : IDisposable
     {
         public PageSize Size { get; } = size;
         public ByteBuffer Content { get; } = content;
+        public LinkArea[] Links { get; } = links;
         public byte[]? Compressed { get; set; }
 
         public void Dispose() => Content.Dispose();
@@ -53,7 +54,7 @@ internal static class DocumentRenderer
                 context = Layout(document, settings, pages, total);
             }
 
-            Emit(pages, context.Canvas.Resources, metadata, settings, output);
+            Emit(pages, context, metadata, settings, output);
         }
         finally
         {
@@ -127,6 +128,7 @@ internal static class DocumentRenderer
 
                 var buffer = new ByteBuffer(16 * 1024);
                 canvas.BeginPage(buffer, height);
+                context.PageLinks.Clear();
 
                 if (page.BackgroundColor is { } color)
                     canvas.FillRectangle(0, 0, width, height, color);
@@ -139,7 +141,7 @@ internal static class DocumentRenderer
 
                 canvas.EndPage();
                 context.RelaxKeepTogether = false;
-                pages.Add(new PageOutput(page.PageSize, buffer));
+                pages.Add(new PageOutput(page.PageSize, buffer, [.. context.PageLinks]));
 
                 if (content.Kind != SpacePlanKind.Partial)
                     break;
@@ -166,8 +168,9 @@ internal static class DocumentRenderer
         context.Canvas.Translate(-x, -y);
     }
 
-    private static void Emit(List<PageOutput> pages, DocumentResources resources, DocumentMetadata metadata, DocumentSettings settings, Stream output)
+    private static void Emit(List<PageOutput> pages, LayoutContext context, DocumentMetadata metadata, DocumentSettings settings, Stream output)
     {
+        var resources = context.Canvas.Resources;
         CompressionLevel? level = settings.Compression switch
         {
             PdfCompression.None => null,
@@ -216,17 +219,33 @@ internal static class DocumentRenderer
         var infoId = writer.ReserveObject();
         var o = writer.Out;
 
+        // Page ids are reserved up front so links can point to later pages.
         var pageIds = new int[pages.Count];
+        for (var i = 0; i < pages.Count; i++)
+            pageIds[i] = writer.ReserveObject();
+
         for (var i = 0; i < pages.Count; i++)
         {
             var page = pages[i];
-            var pageId = pageIds[i] = writer.ReserveObject();
             var contentId = writer.ReserveObject();
 
-            writer.BeginObject(pageId);
+            // Links to unknown sections are dropped.
+            var links = page.Links.Where(link => link.Uri != null || context.Sections.ContainsKey(link.Section!)).ToArray();
+            var linkIds = links.Select(_ => writer.ReserveObject()).ToArray();
+
+            writer.BeginObject(pageIds[i]);
             o.Ascii("<</Type/Page/Parent ").Int(pagesId).Ascii(" 0 R/MediaBox[0 0 ")
                 .Real(page.Size.Width).Space().Real(page.Size.Height)
-                .Ascii("]/Resources ").Int(resourcesId).Ascii(" 0 R/Contents ").Int(contentId).Ascii(" 0 R>>");
+                .Ascii("]/Resources ").Int(resourcesId).Ascii(" 0 R/Contents ").Int(contentId).Ascii(" 0 R");
+            if (linkIds.Length > 0)
+            {
+                o.Ascii("/Annots[");
+                foreach (var id in linkIds)
+                    o.Int(id).Ascii(" 0 R ");
+                o.Ascii("]");
+            }
+
+            o.Ascii(">>");
             writer.EndObject();
 
             if (page.Compressed != null)
@@ -235,6 +254,9 @@ internal static class DocumentRenderer
                 writer.WriteStream(contentId, page.Content.Span, null, flateEncoded: false);
 
             page.Compressed = null;
+
+            for (var l = 0; l < links.Length; l++)
+                WriteLink(writer, linkIds[l], links[l], context.Sections, pageIds);
         }
 
         var fontIds = new List<(string Name, int Id)>();
@@ -273,13 +295,118 @@ internal static class DocumentRenderer
         o.Ascii("]>>");
         writer.EndObject();
 
+        var outlinesId = WriteOutline(writer, context.Bookmarks, pageIds);
+
         writer.BeginObject(catalogId);
-        o.Ascii("<</Type/Catalog/Pages ").Int(pagesId).Ascii(" 0 R>>");
+        o.Ascii("<</Type/Catalog/Pages ").Int(pagesId).Ascii(" 0 R");
+        if (outlinesId != 0)
+            o.Ascii("/Outlines ").Int(outlinesId).Ascii(" 0 R/PageMode/UseOutlines");
+        o.Ascii(">>");
         writer.EndObject();
 
         WriteInfo(writer, infoId, metadata);
 
         writer.WriteTrailer(catalogId, infoId);
+    }
+
+    private static void WriteDestination(ByteBuffer o, Destination destination, int[] pageIds) =>
+        o.Ascii("[").Int(pageIds[destination.PageIndex]).Ascii(" 0 R/XYZ ")
+            .Real(destination.X).Space().Real(destination.Y).Ascii(" null]");
+
+    private static void WriteLink(PdfWriter writer, int id, LinkArea link, Dictionary<string, Destination> sections, int[] pageIds)
+    {
+        var o = writer.Out;
+        writer.BeginObject(id);
+        o.Ascii("<</Type/Annot/Subtype/Link/F 4/Border[0 0 0]/Rect[")
+            .Real(link.Left).Space().Real(link.Bottom).Space().Real(link.Right).Space().Real(link.Top).Ascii("]");
+
+        if (link.Uri != null)
+        {
+            o.Ascii("/A<</S/URI/URI").AsciiString(link.Uri).Ascii(">>");
+        }
+        else
+        {
+            o.Ascii("/Dest");
+            WriteDestination(o, sections[link.Section!], pageIds);
+        }
+
+        o.Ascii(">>");
+        writer.EndObject();
+    }
+
+    private sealed class OutlineNode(Bookmark? bookmark)
+    {
+        public Bookmark? Bookmark { get; } = bookmark;
+        public List<OutlineNode> Children { get; } = [];
+        public int Id { get; set; }
+        public int Descendants => Children.Sum(child => 1 + child.Descendants);
+    }
+
+    /// <summary>Writes the document outline (bookmarks panel). Returns 0 when there are no bookmarks.</summary>
+    private static int WriteOutline(PdfWriter writer, List<Bookmark> bookmarks, int[] pageIds)
+    {
+        if (bookmarks.Count == 0)
+            return 0;
+
+        // Build the tree. A level may be at most one deeper than the previous entry.
+        var root = new OutlineNode(null);
+        var path = new List<OutlineNode> { root };
+        foreach (var bookmark in bookmarks)
+        {
+            var level = Math.Min(bookmark.Level, path.Count - 1);
+            path.RemoveRange(level + 1, path.Count - level - 1);
+            var node = new OutlineNode(bookmark);
+            path[level].Children.Add(node);
+            path.Add(node);
+        }
+
+        void AssignIds(OutlineNode node)
+        {
+            node.Id = writer.ReserveObject();
+            foreach (var child in node.Children)
+                AssignIds(child);
+        }
+
+        AssignIds(root);
+
+        var o = writer.Out;
+        void Write(OutlineNode node, OutlineNode? parent, OutlineNode? previous, OutlineNode? next)
+        {
+            writer.BeginObject(node.Id);
+            o.Ascii("<<");
+            if (parent == null)
+            {
+                o.Ascii("/Type/Outlines");
+            }
+            else
+            {
+                o.Ascii("/Title").TextString(node.Bookmark!.Value.Title).Ascii("/Parent ").Int(parent.Id).Ascii(" 0 R");
+                if (previous != null) o.Ascii("/Prev ").Int(previous.Id).Ascii(" 0 R");
+                if (next != null) o.Ascii("/Next ").Int(next.Id).Ascii(" 0 R");
+                o.Ascii("/Dest");
+                WriteDestination(o, node.Bookmark!.Value.Destination, pageIds);
+            }
+
+            if (node.Children.Count > 0)
+            {
+                // A positive count shows the entry expanded.
+                o.Ascii("/First ").Int(node.Children[0].Id).Ascii(" 0 R/Last ").Int(node.Children[^1].Id)
+                    .Ascii(" 0 R/Count ").Int(node.Descendants);
+            }
+
+            o.Ascii(">>");
+            writer.EndObject();
+
+            for (var i = 0; i < node.Children.Count; i++)
+            {
+                Write(node.Children[i], node,
+                    i > 0 ? node.Children[i - 1] : null,
+                    i + 1 < node.Children.Count ? node.Children[i + 1] : null);
+            }
+        }
+
+        Write(root, null, null, null);
+        return root.Id;
     }
 
     private static void PrepareFont(FontOutput output, CompressionLevel? level)

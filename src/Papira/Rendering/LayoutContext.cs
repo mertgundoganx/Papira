@@ -1,5 +1,13 @@
 namespace Papira.Rendering;
 
+/// <summary>A position on a page, in PDF coordinates (origin at the bottom left).</summary>
+internal readonly record struct Destination(int PageIndex, float X, float Y);
+
+/// <summary>A clickable area on the current page that opens a URI or jumps to a section.</summary>
+internal readonly record struct LinkArea(float Left, float Bottom, float Right, float Top, string? Uri, string? Section);
+
+internal readonly record struct Bookmark(string Title, int Level, Destination Destination);
+
 /// <summary>State shared by all elements while a document is laid out.</summary>
 internal sealed class LayoutContext(Canvas canvas)
 {
@@ -29,6 +37,15 @@ internal sealed class LayoutContext(Canvas canvas)
 
     /// <summary>Height of the content area (between header and footer) of the current page.</summary>
     public float BodyHeight { get; set; } = float.MaxValue;
+
+    /// <summary>Link areas of the page being laid out; collected by the renderer after each page.</summary>
+    public List<LinkArea> PageLinks { get; } = [];
+
+    /// <summary>Named sections (first occurrence wins), targets of internal links.</summary>
+    public Dictionary<string, Destination> Sections { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Document outline entries in document order.</summary>
+    public List<Bookmark> Bookmarks { get; } = [];
 
     /// <summary>Fully resolved default text style in effect for the element being laid out.</summary>
     public TextStyle DefaultStyle { get; set; } = TextStyle.BuiltIn;

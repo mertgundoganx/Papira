@@ -9,9 +9,9 @@
 
 Papira builds PDF documents from C# code with a fluent layout API. It has no browser, no native libraries and no third-party packages: the PDF writer, TrueType parser, font subsetter, PNG/JPEG handling and the layout engine are all part of the library.
 
-- **Fast.** A 2-page invoice takes about 1.6 ms on one thread. On an 8-core Apple M2, Papira produces 3,000 to 3,800 invoices per second.
+- **Fast.** A 2-page invoice takes about 0.6 ms on one thread. On an 8-core Apple M2, Papira produces about 5,000 invoices per second.
 - **Uses every core.** Compression, font subsetting and image encoding run in parallel, and documents can be generated concurrently from many threads.
-- **Unicode text.** Fonts are embedded as subsets with a ToUnicode map, so text stays selectable and searchable. Characters such as ğ, ş, ı, İ, ₺ and € work out of the box.
+- **Typographic text.** Pair kerning from the font's GPOS or kern table, as in browsers and word processors. Fonts are embedded as subsets with a ToUnicode map, so text stays selectable and searchable. Characters such as ğ, ş, ı, İ, ₺ and € work out of the box.
 - **Same output everywhere.** The bundled Lato font is the default, so documents look the same on Windows, macOS and minimal Linux containers with no fonts installed.
 - **Free for any use.** MIT licensed, including commercial use.
 
@@ -82,17 +82,53 @@ Content flows across pages automatically. Table headers repeat on every page, an
 
 | Category | API |
 |---|---|
-| Structure | `Column`, `Row` (`RelativeItem`, `ConstantItem`, `AutoItem`), `Table` (`ColumnsDefinition`, `Header`, `Cell().ColumnSpan(n)`) |
+| Structure | `Column`, `Row` (`RelativeItem`, `ConstantItem`, `AutoItem`), `Table` (`ColumnsDefinition`, `Header`, `Cell().ColumnSpan(n)`, `Cell().RowSpan(n)`), `List`, `NumberedList` |
 | Text | `Text("...")`, `Text(t => { t.Span(...); t.CurrentPageNumber(); t.TotalPages(); })`, `AlignLeft/Center/Right`, `Justify`, `LineHeight`, `LetterSpacing`, `Underline`, `Strikethrough`, font weights, italic |
 | Spacing and size | `Padding*`, `Width`, `Height`, `MinWidth`/`MaxWidth`, `MinHeight`/`MaxHeight`, `Extend*` |
 | Decoration | `Background`, `Border*` with `BorderColor`, `LineHorizontal`, `LineVertical` |
 | Positioning | `AlignLeft/Center/Right`, `AlignTop/Middle/Bottom` |
 | Paging | `PageBreak`, `ShowEntire` (never split), `EnsureSpace(minHeight)` (keep a heading with the content that follows) |
 | Page | `Size`, `Margin*`, `PageColor`, `Header`/`Content`/`Footer`, `Background`/`Foreground` full-page layers (for example watermarks), several `Page(...)` sections with different setups |
+| Navigation | `Hyperlink(url)`, `Section(name)` with `SectionLink(name)`, `Bookmark(title, level)` for the outline panel |
 | Images | `Image(...)` with `FitWidth` (default), `FitHeight`, `FitArea`. JPEG and PNG (all color types and bit depths, transparency, interlacing) |
 | Reuse | `Element(c => ...)`, `Component(IComponent)`, `DefaultTextStyle(...)` on the document, a page or any container |
 
 All sizes are in points (1/72 inch). Use `Unit.Millimetre(...)`, `Unit.Centimetre(...)` or `Unit.Inch(...)` to convert.
+
+### Lists and merged table cells
+
+```csharp
+container.NumberedList(list =>
+{
+    list.Item().Text("First step");
+    list.Item().Column(item =>
+    {
+        item.Item().Text("Second step, with details:");
+        item.Item().List(inner => inner.Item().Text("A nested bullet"));
+    });
+});
+
+table.Cell().RowSpan(2).Text("Spans two rows");
+table.Cell().ColumnSpan(2).Text("Spans two columns");
+```
+
+Rows connected by a row span are kept together: if they don't fit on the page, they move to the next one as a group.
+
+### Links and bookmarks
+
+```csharp
+container.Hyperlink("https://example.com").Text("Visit our website").Underline();
+
+// Jump inside the document, also to later pages.
+container.SectionLink("totals").Text("See totals");
+container.Section("totals").Text("Totals").Bold();
+
+// Entries in the bookmarks panel of PDF viewers; level 1 nests under the previous level 0 entry.
+column.Item().Bookmark("Invoice").Text("Invoice").FontSize(20);
+column.Item().Bookmark("Line items", level: 1).Table(...);
+```
+
+Links must be absolute URIs with a scheme (`https:`, `mailto:`, `tel:` …); `javascript:` and `data:` links are rejected.
 
 ### Reusable components
 
@@ -120,6 +156,20 @@ container.Text("Hello").FontFamily("Inter").SemiBold();
 ```
 
 Font families are looked up in this order: fonts you registered, then fonts installed on the machine, then the default Lato. System fonts are indexed once, the first time they're needed. If a family has no bold or italic face, Papira simulates it.
+
+### Fallback fonts
+
+Characters that a font doesn't contain (for example Chinese, Arabic or symbols in a customer name) are taken from fallback fonts, character by character:
+
+```csharp
+// Per style: tried in order for characters "Inter" lacks.
+container.Text(customerName).FontFamily("Inter", "Noto Sans SC", "Noto Sans Arabic");
+
+// For all documents.
+FontManager.FallbackFontFamilies = ["Noto Sans SC", "Noto Sans Symbols"];
+```
+
+After the style's fallbacks and the global list, every other registered font is tried, so registering a font is often enough. Characters found in no font are drawn as the font's `.notdef` box.
 
 TrueType-outline fonts (`.ttf`, `.ttc`) are supported. CFF-based `.otf` fonts are not supported yet.
 
@@ -162,9 +212,9 @@ dotnet run -c Release --project samples/Papira.Samples -- bench 5000
 
 Papira is young. These features are not implemented yet:
 
-- Kerning and ligatures. Glyphs are placed by their advance widths. Scripts that need complex shaping (Arabic, Indic scripts) are not supported.
-- Automatic font fallback per character. Glyphs missing from the chosen font render as the font's `.notdef` box.
-- Hyperlinks, bookmarks, forms, encryption and PDF/A.
+- Ligatures and complex shaping. Scripts that need it (Arabic, Indic scripts) are not supported yet, and right-to-left text is not reordered.
+- Color emoji. Emoji fonts that store bitmaps or color layers (Apple Color Emoji, Noto Color Emoji) are not supported; monochrome outline fonts such as Noto Emoji work.
+- Forms, encryption and PDF/A.
 - CFF-based OpenType fonts (`.otf`).
 
 Contributions are welcome. See the [issues](https://github.com/mertgundoganx/Papira/issues).

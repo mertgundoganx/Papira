@@ -225,7 +225,7 @@ public class RegressionTests
         var cmap = pdf.Streams().Single(s => s.Contains("begincmap"));
         var mappings = cmap[cmap.IndexOf("beginbfchar", StringComparison.Ordinal)..];
         Assert.DoesNotContain("<0000>", mappings);
-        Assert.Equal("A��B\n", pdf.ExtractText());
+        Assert.Equal("A\uFFFD\uFFFDB\n", pdf.ExtractText());
     }
 
     [Fact]

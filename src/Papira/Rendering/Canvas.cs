@@ -26,6 +26,9 @@ internal sealed class Canvas(DocumentResources resources)
 
     public DocumentResources Resources => resources;
 
+    /// <summary>Converts a point of the current (translated) layout coordinates to PDF page coordinates.</summary>
+    public (float X, float Y) ToPdf(float x, float y) => (PdfX(x), PdfY(y));
+
     public void BeginPage(ByteBuffer output, float pageHeight)
     {
         _out = output;
@@ -69,8 +72,11 @@ internal sealed class Canvas(DocumentResources resources)
             .Real(PdfX(x)).Space().Real(PdfY(y + height)).Ascii(" cm /").Ascii(usage.Name).Ascii(" Do Q\n");
     }
 
-    /// <summary>Draws glyphs of a single style starting at (<paramref name="x"/>, <paramref name="baseline"/>).</summary>
-    public void DrawGlyphs(ResolvedTextStyle style, float x, float baseline, ReadOnlySpan<ushort> glyphs, ReadOnlySpan<int> codepoints)
+    /// <summary>
+    /// Draws glyphs of a single style starting at (<paramref name="x"/>, <paramref name="baseline"/>).
+    /// <paramref name="kerning"/> holds the adjustment after each glyph in font units.
+    /// </summary>
+    public void DrawGlyphs(ResolvedTextStyle style, float x, float baseline, ReadOnlySpan<ushort> glyphs, ReadOnlySpan<int> codepoints, ReadOnlySpan<short> kerning)
     {
         if (glyphs.IsEmpty)
             return;
@@ -114,12 +120,30 @@ internal sealed class Canvas(DocumentResources resources)
         }
 
         _out.Ascii(style.Font.FakeItalic ? "1 0 0.2 1 " : "1 0 0 1 ")
-            .Real(PdfX(x)).Space().Real(PdfY(baseline)).Ascii(" Tm <");
+            .Real(PdfX(x)).Space().Real(PdfY(baseline)).Ascii(" Tm ");
 
-        foreach (var glyph in glyphs)
-            _out.Hex16(glyph);
+        // Adjustments after the last glyph don't matter for this run.
+        var kerned = kerning.Length >= glyphs.Length && kerning[..^1].ContainsAnyExcept((short)0);
+        if (!kerned)
+        {
+            _out.Byte((byte)'<');
+            foreach (var glyph in glyphs)
+                _out.Hex16(glyph);
+            _out.Ascii("> Tj\n");
+            return;
+        }
 
-        _out.Ascii("> Tj\n");
+        // TJ numbers are in thousandths of an em; positive values move the next glyph left.
+        var toThousandths = -1000.0 / style.Font.Font.UnitsPerEm;
+        _out.Ascii("[<");
+        for (var i = 0; i < glyphs.Length; i++)
+        {
+            _out.Hex16(glyphs[i]);
+            if (i < glyphs.Length - 1 && kerning[i] != 0)
+                _out.Byte((byte)'>').Real(kerning[i] * toThousandths).Byte((byte)'<');
+        }
+
+        _out.Ascii(">] TJ\n");
     }
 
     private void EndText()

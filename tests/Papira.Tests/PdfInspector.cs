@@ -67,19 +67,54 @@ internal sealed partial class PdfInspector
 
     /// <summary>Content streams of the pages, in page order.</summary>
     public IReadOnlyList<string> PageContents() =>
-        Streams().Where(s => s.Contains(" Tj") || s.Contains(" re f") || s.Contains(" Do")).ToList();
+        Streams().Where(s => s.Contains(" Tj") || s.Contains(" TJ") || s.Contains(" re f") || s.Contains(" Do")).ToList();
 
     /// <summary>
     /// Text of every glyph run (one line per run), decoded through the ToUnicode maps.
     /// Intended for single-font documents: glyph ids of different fonts are not distinguished.
     /// </summary>
-    public string ExtractText()
+    public string ExtractText() => string.Concat(TextRuns().Select(run => run.Text + "\n"));
+
+    /// <summary>Glyph runs with their page index and start position (PDF coordinates), in drawing order.</summary>
+    public List<(int Page, float X, float Y, string Text)> TextRuns()
+    {
+        var map = ToUnicodeMap();
+        var runs = new List<(int, float, float, string)>();
+        var pages = PageContents();
+
+        for (var p = 0; p < pages.Count; p++)
+        {
+            foreach (Match run in GlyphRunRegex().Matches(pages[p]))
+            {
+                // A run is either "<hex> Tj" or a kerned "[<hex> n <hex> ...] TJ".
+                var builder = new StringBuilder();
+                foreach (Match segment in HexStringRegex().Matches(run.Groups["glyphs"].Value))
+                {
+                    var hex = segment.Groups[1].Value;
+                    for (var i = 0; i + 4 <= hex.Length; i += 4)
+                        builder.Append(map.TryGetValue(hex.Substring(i, 4), out var text) ? text : "\uFFFD");
+                }
+
+                runs.Add((p,
+                    float.Parse(run.Groups["x"].Value, CultureInfo.InvariantCulture),
+                    float.Parse(run.Groups["y"].Value, CultureInfo.InvariantCulture),
+                    builder.ToString()));
+            }
+        }
+
+        return runs;
+    }
+
+    private Dictionary<string, string> ToUnicodeMap()
     {
         var map = new Dictionary<string, string>();
         foreach (var cmap in Streams().Where(s => s.Contains("begincmap")))
         {
-            var mappings = cmap[cmap.IndexOf("beginbfchar", StringComparison.Ordinal)..];
-            foreach (Match m in CMapEntryRegex().Matches(mappings))
+            var index = cmap.IndexOf("beginbfchar", StringComparison.Ordinal);
+            if (index < 0)
+                continue;
+
+            foreach (Match m in CMapEntryRegex().Matches(cmap[index..]))
             {
                 var hex = m.Groups[2].Value;
                 var chars = new char[hex.Length / 4];
@@ -89,26 +124,17 @@ internal sealed partial class PdfInspector
             }
         }
 
-        var builder = new StringBuilder();
-        foreach (var page in PageContents())
-        {
-            foreach (Match run in GlyphRunRegex().Matches(page))
-            {
-                var hex = run.Groups[1].Value;
-                for (var i = 0; i + 4 <= hex.Length; i += 4)
-                    builder.Append(map.TryGetValue(hex.Substring(i, 4), out var text) ? text : "�");
-                builder.Append('\n');
-            }
-        }
-
-        return builder.ToString();
+        return map;
     }
 
     [GeneratedRegex(@"<([0-9A-F]{4})><([0-9A-F]+)>")]
     private static partial Regex CMapEntryRegex();
 
-    [GeneratedRegex(@"<([0-9A-F]*)> Tj")]
+    [GeneratedRegex(@"1 0 0(?:\.2)? 1 (?<x>-?[\d.]+) (?<y>-?[\d.]+) Tm (?<glyphs><[0-9A-F]*> Tj|\[[^\]]*\] TJ)")]
     private static partial Regex GlyphRunRegex();
+
+    [GeneratedRegex(@"<([0-9A-F]*)>")]
+    private static partial Regex HexStringRegex();
 
     [GeneratedRegex(@"/Type/Page/")]
     private static partial Regex PageRegex();

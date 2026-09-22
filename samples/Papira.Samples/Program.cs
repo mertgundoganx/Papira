@@ -27,14 +27,15 @@ if (mode is "all" or "bench")
     var count = args.Length > 1 ? int.Parse(args[1], CultureInfo.InvariantCulture) : 2000;
     var data = InvoiceData.Sample(itemCount: 20);
 
-    // Warm-up (JIT, font parsing).
-    for (var i = 0; i < 20; i++)
+    // Warm-up: font parsing, and enough runs for the JIT to finish optimizing hot code (tiered compilation).
+    var warmUp = Stopwatch.StartNew();
+    while (warmUp.Elapsed < TimeSpan.FromSeconds(2))
         InvoiceDocument.Create(data).GeneratePdf();
 
     var sw = Stopwatch.StartNew();
-    for (var i = 0; i < 200; i++)
+    for (var i = 0; i < 1000; i++)
         InvoiceDocument.Create(data).GeneratePdf();
-    var single = sw.Elapsed.TotalMilliseconds / 200;
+    var single = sw.Elapsed.TotalMilliseconds / 1000;
 
     sw.Restart();
     long bytes = 0;
