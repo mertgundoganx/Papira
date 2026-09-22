@@ -13,7 +13,7 @@
 
   <PropertyGroup Label="Package">
     <PackageId>Papira</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>Mert Gundogan</Authors>
     <Copyright>Copyright (c) 2026 Mert Gundogan</Copyright>
     <Description>Fast, free, dependency-free PDF generation for .NET. Fluent layout API with automatic pagination, tables, TrueType font embedding with subsetting, PNG/JPEG images and a multi-core output pipeline. No browser, no native libraries.</Description>

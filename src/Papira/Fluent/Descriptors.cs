@@ -50,18 +50,107 @@ public sealed class RowDescriptor
     }
 }
 
-/// <summary>A table cell container; use <see cref="TableExtensions.ColumnSpan"/> to span columns.</summary>
+/// <summary>
+/// A table cell container; use <see cref="TableExtensions.ColumnSpan"/> and <see cref="TableExtensions.RowSpan"/>
+/// to make it cover several columns or rows.
+/// </summary>
 public interface ITableCellContainer : IContainer;
 
 public static class TableExtensions
 {
-    public static IContainer ColumnSpan(this ITableCellContainer cell, int columns)
+    /// <summary>Makes the cell cover <paramref name="columns"/> columns (clamped to the column count).</summary>
+    public static ITableCellContainer ColumnSpan(this ITableCellContainer cell, int columns)
     {
-        if (cell is not TableCell tableCell)
-            throw new ArgumentException("Table cells must be created with table.Cell() or header.Cell().", nameof(cell));
+        AsCell(cell).ColumnSpan = Math.Max(1, columns);
+        return cell;
+    }
 
-        tableCell.ColumnSpan = Math.Max(1, columns);
-        return tableCell;
+    /// <summary>
+    /// Makes the cell cover <paramref name="rows"/> rows; cells of the following rows skip the columns it occupies.
+    /// Rows connected by row spans are kept together on one page.
+    /// </summary>
+    public static ITableCellContainer RowSpan(this ITableCellContainer cell, int rows)
+    {
+        AsCell(cell).RowSpan = Math.Max(1, rows);
+        return cell;
+    }
+
+    private static TableCell AsCell(ITableCellContainer cell) =>
+        cell as TableCell ?? throw new ArgumentException("Table cells must be created with table.Cell() or header.Cell().", nameof(cell));
+}
+
+/// <summary>Items of a bulleted or numbered list.</summary>
+public sealed class ListDescriptor
+{
+    private readonly List<Slot> _items = [];
+    private readonly bool _numbered;
+    private float _spacing = 4;
+    private float? _markerWidth;
+    private int _start = 1;
+    private Func<int, string> _marker;
+
+    internal ListDescriptor(bool numbered)
+    {
+        _numbered = numbered;
+        _marker = numbered ? n => n.ToString(CultureInfo.InvariantCulture) + "." : _ => "\u2022";
+    }
+
+    /// <summary>Vertical space between items, in points. Default: 4.</summary>
+    public ListDescriptor Spacing(float value)
+    {
+        _spacing = value;
+        return this;
+    }
+
+    /// <summary>Width reserved for the markers, in points. Default: 12 for bullets, 22 for numbers.</summary>
+    public ListDescriptor MarkerWidth(float value)
+    {
+        _markerWidth = value;
+        return this;
+    }
+
+    /// <summary>Number of the first item of a numbered list. Default: 1.</summary>
+    public ListDescriptor StartAt(int number)
+    {
+        _start = number;
+        return this;
+    }
+
+    /// <summary>Marker text for the item with the given number, e.g. <c>n => $"{n})"</c> or <c>_ => "–"</c>.</summary>
+    public ListDescriptor Marker(Func<int, string> marker)
+    {
+        _marker = marker ?? throw new ArgumentNullException(nameof(marker));
+        return this;
+    }
+
+    public IContainer Item()
+    {
+        var slot = new Slot();
+        _items.Add(slot);
+        return slot;
+    }
+
+    /// <summary>A column of rows: a right-aligned marker column next to the item content.</summary>
+    internal ColumnElement Build()
+    {
+        var column = new ColumnElement { Spacing = _spacing };
+        var markerWidth = _markerWidth ?? (_numbered ? 22 : 12);
+
+        for (var i = 0; i < _items.Count; i++)
+        {
+            var marker = new TextElement { Alignment = TextAlignment.Right };
+            marker.Spans.Add(new TextSpan { Text = _marker(_start + i) });
+
+            var markerItem = new RowItem(RowItemKind.Constant, markerWidth) { Child = marker };
+            var contentItem = new RowItem(RowItemKind.Relative, 1) { Child = _items[i] };
+
+            var row = new RowElement { Spacing = 6 };
+            row.Items.Add(markerItem);
+            row.Items.Add(contentItem);
+            column.Items.Add(row);
+        }
+
+        return column;
     }
 }
 

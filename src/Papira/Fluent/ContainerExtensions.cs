@@ -222,6 +222,19 @@ public static class ContainerExtensions
         container.Assign(descriptor.Element);
     }
 
+    /// <summary>A bulleted list; each <see cref="ListDescriptor.Item"/> can hold any content, including nested lists.</summary>
+    public static void List(this IContainer container, Action<ListDescriptor> content) => container.AddList(content, numbered: false);
+
+    /// <summary>A numbered list ("1.", "2.", …); see <see cref="ListDescriptor.StartAt"/> and <see cref="ListDescriptor.Marker"/>.</summary>
+    public static void NumberedList(this IContainer container, Action<ListDescriptor> content) => container.AddList(content, numbered: true);
+
+    private static void AddList(this IContainer container, Action<ListDescriptor> content, bool numbered)
+    {
+        var descriptor = new ListDescriptor(numbered);
+        content(descriptor);
+        container.Assign(descriptor.Build());
+    }
+
     public static void Table(this IContainer container, Action<TableDescriptor> content)
     {
         var descriptor = new TableDescriptor();

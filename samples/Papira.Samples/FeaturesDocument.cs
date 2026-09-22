@@ -84,13 +84,53 @@ public static class FeaturesDocument
                         }
                     });
 
+                    column.Item().EnsureSpace(200).Bookmark("5. Listeler ve birleşik hücreler").Text("5. Listeler ve birleşik hücreler").FontSize(14).Bold();
+                    column.Item().Row(row =>
+                    {
+                        row.Spacing(20);
+                        row.RelativeItem().List(list =>
+                        {
+                            list.Item().Text("Madde işaretli liste");
+                            list.Item().Column(item =>
+                            {
+                                item.Item().Text("İç içe liste:");
+                                item.Item().NumberedList(inner =>
+                                {
+                                    inner.Item().Text("birinci");
+                                    inner.Item().Text("ikinci");
+                                });
+                            });
+                            list.Item().Text("Uzun öğeler, işaretin sağında hizalı olarak alt satıra kayar.");
+                        });
+
+                        row.RelativeItem().Table(table =>
+                        {
+                            table.ColumnsDefinition(c =>
+                            {
+                                c.RelativeColumn();
+                                c.RelativeColumn();
+                                c.RelativeColumn();
+                            });
+
+                            IContainer Cell(IContainer c) => c.Border(0.5f).BorderColor(Colors.Grey.Darken1).Padding(4);
+
+                            Cell(table.Cell().RowSpan(2).Background(Colors.Grey.Lighten3)).AlignMiddle().Text("2 satır");
+                            Cell(table.Cell()).Text("B");
+                            Cell(table.Cell()).Text("C");
+                            Cell(table.Cell().ColumnSpan(2).Background(Colors.Grey.Lighten4)).Text("2 sütun");
+                            Cell(table.Cell()).Text("D");
+                            Cell(table.Cell()).Text("E");
+                            Cell(table.Cell()).Text("F");
+                        });
+                    });
+
                     column.Item().PageBreak();
 
-                    column.Item().Bookmark("5. Sayfalara bölünen uzun metin").Text("5. Sayfalara bölünen uzun metin").FontSize(14).Bold();
+                    column.Item().Bookmark("6. Sayfalara bölünen uzun metin").Text("6. Sayfalara bölünen uzun metin").FontSize(14).Bold();
                     column.Item().SectionLink("table").Text("Bu bölümü atlayıp tabloya git →").FontColor(Colors.Blue).Underline();
                     column.Item().Text(string.Concat(Enumerable.Repeat(Lorem, 40))).Justify().LineHeight(1.5f);
 
-                    column.Item().EnsureSpace(120).Section("table").Bookmark("6. Sayfalara bölünen tablo").Text("6. Sayfalara bölünen tablo (başlık her sayfada tekrarlanır)").FontSize(14).Bold();
+                    column.Item().EnsureSpace(120).Section("table").Bookmark("7. Sayfalara bölünen tablo").Text("7. Sayfalara bölünen tablo (başlık her sayfada tekrarlanır)").FontSize(14).Bold();
                     column.Item().Table(table =>
                     {
                         table.ColumnsDefinition(c =>

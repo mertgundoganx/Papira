@@ -82,7 +82,7 @@ Content flows across pages automatically. Table headers repeat on every page, an
 
 | Category | API |
 |---|---|
-| Structure | `Column`, `Row` (`RelativeItem`, `ConstantItem`, `AutoItem`), `Table` (`ColumnsDefinition`, `Header`, `Cell().ColumnSpan(n)`) |
+| Structure | `Column`, `Row` (`RelativeItem`, `ConstantItem`, `AutoItem`), `Table` (`ColumnsDefinition`, `Header`, `Cell().ColumnSpan(n)`, `Cell().RowSpan(n)`), `List`, `NumberedList` |
 | Text | `Text("...")`, `Text(t => { t.Span(...); t.CurrentPageNumber(); t.TotalPages(); })`, `AlignLeft/Center/Right`, `Justify`, `LineHeight`, `LetterSpacing`, `Underline`, `Strikethrough`, font weights, italic |
 | Spacing and size | `Padding*`, `Width`, `Height`, `MinWidth`/`MaxWidth`, `MinHeight`/`MaxHeight`, `Extend*` |
 | Decoration | `Background`, `Border*` with `BorderColor`, `LineHorizontal`, `LineVertical` |
@@ -94,6 +94,25 @@ Content flows across pages automatically. Table headers repeat on every page, an
 | Reuse | `Element(c => ...)`, `Component(IComponent)`, `DefaultTextStyle(...)` on the document, a page or any container |
 
 All sizes are in points (1/72 inch). Use `Unit.Millimetre(...)`, `Unit.Centimetre(...)` or `Unit.Inch(...)` to convert.
+
+### Lists and merged table cells
+
+```csharp
+container.NumberedList(list =>
+{
+    list.Item().Text("First step");
+    list.Item().Column(item =>
+    {
+        item.Item().Text("Second step, with details:");
+        item.Item().List(inner => inner.Item().Text("A nested bullet"));
+    });
+});
+
+table.Cell().RowSpan(2).Text("Spans two rows");
+table.Cell().ColumnSpan(2).Text("Spans two columns");
+```
+
+Rows connected by a row span are kept together: if they don't fit on the page, they move to the next one as a group.
 
 ### Links and bookmarks
 
