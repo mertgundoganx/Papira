@@ -116,6 +116,65 @@ public static class ContainerExtensions
     public static IContainer ExtendVertical(this IContainer container) =>
         container.Assign(new ExtendElement { Vertical = true });
 
+    // ---- Transforms and effects ------------------------------------------------------------------
+
+    /// <summary>Rotates the content around the centre of its area. The layout size does not change.</summary>
+    public static IContainer Rotate(this IContainer container, float degrees) =>
+        container.Assign(new RotateElement(degrees));
+
+    /// <summary>Turns the content a quarter turn clockwise, swapping its width and height.</summary>
+    public static IContainer RotateRight(this IContainer container) => container.Assign(new QuarterTurnElement(true));
+
+    /// <summary>Turns the content a quarter turn counter-clockwise, swapping its width and height.</summary>
+    public static IContainer RotateLeft(this IContainer container) => container.Assign(new QuarterTurnElement(false));
+
+    /// <summary>Scales the content; its layout size scales with it.</summary>
+    public static IContainer Scale(this IContainer container, float factor) => container.Scale(factor, factor);
+
+    public static IContainer Scale(this IContainer container, float scaleX, float scaleY) =>
+        container.Assign(new ScaleElement(scaleX, scaleY));
+
+    /// <summary>Draws the content with the given opacity, from 0 (invisible) to 1 (opaque).</summary>
+    public static IContainer Opacity(this IContainer container, float opacity) =>
+        container.Assign(new OpacityElement(opacity));
+
+    /// <summary>
+    /// Rounds the corners of the backgrounds, borders and gradients inside it, and clips the content
+    /// to the rounded rectangle. Rounded borders need the same width on all four sides.
+    /// </summary>
+    public static IContainer CornerRadius(this IContainer container, float radius) =>
+        container.Assign(new CornerRadiusElement(radius));
+
+    /// <summary>
+    /// Fills the area with a linear gradient through the given colors.
+    /// <paramref name="angleDegrees"/> 0 goes left to right, 90 top to bottom.
+    /// </summary>
+    public static IContainer BackgroundLinearGradient(this IContainer container, float angleDegrees, params Color[] colors) =>
+        container.Assign(new GradientElement(false, angleDegrees, Stops(colors)));
+
+    /// <summary>Fills the area with a radial gradient from its centre outwards.</summary>
+    public static IContainer BackgroundRadialGradient(this IContainer container, params Color[] colors) =>
+        container.Assign(new GradientElement(true, 0, Stops(colors)));
+
+    private static Color[] Stops(Color[] colors)
+    {
+        ArgumentNullException.ThrowIfNull(colors);
+        if (colors.Length < 2)
+            throw new ArgumentException("A gradient needs at least two colors.", nameof(colors));
+        return [.. colors];
+    }
+
+    /// <summary>
+    /// Draws custom vector graphics in the element's area. The delegate receives the canvas and the
+    /// available width and height in points. The element takes all the space it is given, so constrain
+    /// it with <c>Width</c>/<c>Height</c> when it should be smaller.
+    /// </summary>
+    public static void Canvas(this IContainer container, Action<IDrawingCanvas, float, float> draw)
+    {
+        ArgumentNullException.ThrowIfNull(draw);
+        container.Assign(new DrawingElement(draw));
+    }
+
     // ---- Alignment -------------------------------------------------------------------------------
 
     public static IContainer AlignLeft(this IContainer container) => container.Align(HorizontalAlignment.Left, null);
@@ -260,6 +319,26 @@ public static class ContainerExtensions
         content(new TextDescriptor(element));
     }
 
+    /// <summary>
+    /// Draws a QR code that fills the shorter side of the area, including the quiet zone required for scanning.
+    /// Constrain it with <c>Width</c> or <c>Height</c> to set its size.
+    /// </summary>
+    public static void QrCode(this IContainer container, string data, QrErrorCorrection correction = QrErrorCorrection.Medium, Color? color = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(data);
+        container.Assign(new QrCodeElement(data, correction, color ?? Colors.Black));
+    }
+
+    /// <summary>
+    /// Draws a Code 128 barcode across the available width (printable ASCII only).
+    /// It is 40 pt high unless the area is shorter.
+    /// </summary>
+    public static void Barcode(this IContainer container, string value, Color? color = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(value);
+        container.Assign(new BarcodeElement(value, color ?? Colors.Black));
+    }
+
     public static ImageDescriptor Image(this IContainer container, Image image) =>
         new(container.Assign(new ImageElement(image)));
 
@@ -267,11 +346,81 @@ public static class ContainerExtensions
 
     public static ImageDescriptor Image(this IContainer container, string path) => container.Image(Papira.Image.FromFile(path));
 
+    /// <summary>Draws a vector drawing, scaled to the available width by default.</summary>
+    public static SvgDescriptor Svg(this IContainer container, SvgImage image) =>
+        new(container.Assign(new SvgElement(image)));
+
+    /// <summary>Reads an SVG file from disk and draws it; use <see cref="SvgImage.FromString"/> for inline markup.</summary>
+    public static SvgDescriptor Svg(this IContainer container, string path) => container.Svg(SvgImage.FromFile(path));
+
+    /// <summary>
+    /// A field a reader types into, spanning the available width. The name identifies the field in the
+    /// filled-in form, so it has to be unique within the document.
+    /// </summary>
+    public static TextFieldDescriptor TextField(this IContainer container, string name) =>
+        new(container.Assign(new FormFieldElement(new FormField(FormFieldKind.Text, Named(name)))).Field);
+
+    /// <summary>A box a reader ticks, as tall as the text around it.</summary>
+    public static CheckboxDescriptor Checkbox(this IContainer container, string name) =>
+        new(container.Assign(new FormFieldElement(new FormField(FormFieldKind.Checkbox, Named(name)))).Field);
+
+    /// <summary>A list a reader picks one of the given options from.</summary>
+    public static DropdownDescriptor Dropdown(this IContainer container, string name, params string[] options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.Length == 0)
+            throw new ArgumentException("A dropdown needs at least one option.", nameof(options));
+        if (Array.IndexOf(options, null) >= 0)
+            throw new ArgumentException("An option of a dropdown cannot be null.", nameof(options));
+
+        var field = new FormField(FormFieldKind.Choice, Named(name)) { Options = [.. options] };
+        return new DropdownDescriptor(container.Assign(new FormFieldElement(field)).Field);
+    }
+
+    /// <summary>The name of a form field, which a PDF stores as a path and so cannot contain a dot.</summary>
+    private static string Named(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        if (name.Contains('.', StringComparison.Ordinal))
+            throw new ArgumentException($"The form field name '{name}' cannot contain a dot; a PDF reads dots as the separator of nested field names.", nameof(name));
+
+        return name;
+    }
+
     public static LineDescriptor LineHorizontal(this IContainer container, float thickness = 1) =>
         new(container.Assign(new LineElement(vertical: false, thickness)));
 
     public static LineDescriptor LineVertical(this IContainer container, float thickness = 1) =>
         new(container.Assign(new LineElement(vertical: true, thickness)));
+
+    /// <summary>
+    /// Lays out a piece of HTML: headings, paragraphs, lists, tables, pictures and links, styled by a
+    /// <c>&lt;style&gt;</c> element, a <c>style</c> attribute or a style sheet passed in the options.
+    /// The markup becomes ordinary Papira elements, so it paginates, and takes part in a tagged document,
+    /// like anything else in the layout.
+    /// </summary>
+    public static void Html(this IContainer container, string html, Action<HtmlOptions>? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(html);
+
+        var settings = new HtmlOptions();
+        options?.Invoke(settings);
+        new Papira.Html.HtmlComposer(settings).Compose(container, Papira.Html.HtmlParser.Parse(html));
+    }
+
+    /// <summary>Reads an HTML file from disk and lays it out; pictures are resolved against its folder.</summary>
+    public static void HtmlFile(this IContainer container, string path, Action<HtmlOptions>? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        container.Html(File.ReadAllText(path), settings =>
+        {
+            if (Path.GetDirectoryName(Path.GetFullPath(path)) is { Length: > 0 } directory)
+                settings.BaseDirectory(directory);
+
+            options?.Invoke(settings);
+        });
+    }
 
     /// <summary>Composes content with a delegate; handy for extracting parts of a layout into methods.</summary>
     public static void Element(this IContainer container, Action<IContainer> compose) => compose(container);

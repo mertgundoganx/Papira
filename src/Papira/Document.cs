@@ -10,6 +10,7 @@ namespace Papira;
 public sealed class Document
 {
     private readonly Action<DocumentDescriptor> _compose;
+    private readonly List<DocumentAttachment> _attachments = [];
     private DocumentMetadata _metadata = new();
     private DocumentSettings _settings = new();
 
@@ -23,6 +24,21 @@ public sealed class Document
         _metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
         return this;
     }
+
+    /// <summary>
+    /// Embeds a file in the document, for example the machine-readable XML of an invoice.
+    /// Readers show attachments in their attachments panel.
+    /// </summary>
+    public Document WithAttachment(DocumentAttachment attachment)
+    {
+        ArgumentNullException.ThrowIfNull(attachment);
+        _attachments.Add(attachment);
+        return this;
+    }
+
+    /// <summary>Embeds a file with its contents read from <paramref name="data"/>.</summary>
+    public Document WithAttachment(string fileName, byte[] data, string mediaType = "application/octet-stream") =>
+        WithAttachment(new DocumentAttachment(fileName, data) { MediaType = mediaType });
 
     public Document WithSettings(DocumentSettings settings)
     {
@@ -51,7 +67,7 @@ public sealed class Document
         if (descriptor.Pages.Count == 0)
             throw new DocumentComposeException("The document has no pages. Add one with document.Page(page => ...).");
 
-        DocumentRenderer.Render(descriptor, _metadata, _settings, stream);
+        DocumentRenderer.Render(descriptor, _metadata, _settings, _attachments, stream);
     }
 }
 

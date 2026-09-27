@@ -16,11 +16,12 @@ namespace Papira.Rendering;
 /// </summary>
 internal static class DocumentRenderer
 {
-    private sealed class PageOutput(PageSize size, ByteBuffer content, LinkArea[] links) : IDisposable
+    private sealed class PageOutput(PageSize size, ByteBuffer content, LinkArea[] links, FormField[] fields) : IDisposable
     {
         public PageSize Size { get; } = size;
         public ByteBuffer Content { get; } = content;
         public LinkArea[] Links { get; } = links;
+        public FormField[] Fields { get; } = fields;
         public byte[]? Compressed { get; set; }
 
         public void Dispose() => Content.Dispose();
@@ -36,7 +37,7 @@ internal static class DocumentRenderer
         public string BaseFont { get; set; } = "";
     }
 
-    public static void Render(DocumentDescriptor document, DocumentMetadata metadata, DocumentSettings settings, Stream output)
+    public static void Render(DocumentDescriptor document, DocumentMetadata metadata, DocumentSettings settings, IReadOnlyList<DocumentAttachment> attachments, Stream output)
     {
         var pages = new List<PageOutput>();
         try
@@ -54,7 +55,7 @@ internal static class DocumentRenderer
                 context = Layout(document, settings, pages, total);
             }
 
-            Emit(pages, context, metadata, settings, output);
+            Emit(pages, context, metadata, settings, attachments, output);
         }
         finally
         {
@@ -77,8 +78,12 @@ internal static class DocumentRenderer
 
     private static LayoutContext Layout(DocumentDescriptor document, DocumentSettings settings, List<PageOutput> pages, int totalPages)
     {
-        var canvas = new Canvas(new DocumentResources());
-        var context = new LayoutContext(canvas) { TotalPages = totalPages };
+        var canvas = new Canvas(new DocumentResources()) { Tagging = settings.Tagged };
+        var context = new LayoutContext(canvas)
+        {
+            TotalPages = totalPages,
+            Structure = settings.Tagged ? new StructureTree() : null,
+        };
         var documentStyle = document.Style.InheritFrom(TextStyle.BuiltIn);
 
         foreach (var page in document.Pages)
@@ -127,21 +132,29 @@ internal static class DocumentRenderer
                         "An element that cannot be split (image, ShowEntire, fixed Height, table row with such content) is larger than the page.");
 
                 var buffer = new ByteBuffer(16 * 1024);
-                canvas.BeginPage(buffer, height);
+                canvas.BeginPage(buffer, width, height);
                 context.PageLinks.Clear();
+                context.PageFormFields.Clear();
 
                 if (page.BackgroundColor is { } color)
                     canvas.FillRectangle(0, 0, width, height, color);
 
+                // Everything but the content of the page is furniture: a reader for the blind skips it.
+                context.Artifact = true;
                 DrawLayer(page.BackgroundSlot, 0, 0, new Size(width, height), context);
                 DrawAt(page.HeaderSlot, page.LeftMargin, page.TopMargin, new Size(contentWidth, header.Height), context);
+                context.Artifact = false;
+
                 DrawAt(page.ContentSlot, page.LeftMargin, page.TopMargin + header.Height, body, context);
+
+                context.Artifact = true;
                 DrawAt(page.FooterSlot, page.LeftMargin, page.TopMargin + contentHeight - footer.Height, new Size(contentWidth, footer.Height), context);
                 DrawLayer(page.ForegroundSlot, 0, 0, new Size(width, height), context);
+                context.Artifact = false;
 
                 canvas.EndPage();
                 context.RelaxKeepTogether = false;
-                pages.Add(new PageOutput(page.PageSize, buffer, [.. context.PageLinks]));
+                pages.Add(new PageOutput(page.PageSize, buffer, [.. context.PageLinks], [.. context.PageFormFields]));
 
                 if (content.Kind != SpacePlanKind.Partial)
                     break;
@@ -168,9 +181,19 @@ internal static class DocumentRenderer
         context.Canvas.Translate(-x, -y);
     }
 
-    private static void Emit(List<PageOutput> pages, LayoutContext context, DocumentMetadata metadata, DocumentSettings settings, Stream output)
+    private static void Emit(List<PageOutput> pages, LayoutContext context, DocumentMetadata metadata, DocumentSettings settings, IReadOnlyList<DocumentAttachment> attachments, Stream output)
     {
         var resources = context.Canvas.Resources;
+        var standard = settings.Standard;
+        if (standard == PdfStandard.PdfA2b && attachments.Count > 0)
+            throw new InvalidOperationException("PDF/A-2b does not allow attachments; use PdfStandard.PdfA3b instead.");
+        if (standard != PdfStandard.None && settings.Encryption != null)
+            throw new InvalidOperationException("PDF/A files cannot be encrypted; archive standards require readable content.");
+
+        var encryptor = settings.Encryption is { } encryption
+            ? new PdfEncryptor(encryption.UserPassword, encryption.OwnerPassword, PermissionBits(encryption.Permissions))
+            : null;
+
         CompressionLevel? level = settings.Compression switch
         {
             PdfCompression.None => null,
@@ -178,6 +201,11 @@ internal static class DocumentRenderer
             PdfCompression.Smallest => CompressionLevel.SmallestSize,
             _ => CompressionLevel.Optimal,
         };
+
+        // The appearances of the form are drawn with the same fonts as the pages, so the glyphs they need
+        // have to be known before the fonts are subset.
+        var formFields = pages.SelectMany(page => page.Fields).ToList();
+        FormWriter.Prepare(formFields, resources);
 
         var fonts = resources.Fonts.Select(f => new FontOutput(f)).ToList();
         var images = resources.Images.ToList();
@@ -212,7 +240,7 @@ internal static class DocumentRenderer
         }
 
         // ---- Sequential write ----
-        using var writer = new PdfWriter(output);
+        using var writer = new PdfWriter(output, encryptor);
         var catalogId = writer.ReserveObject();
         var pagesId = writer.ReserveObject();
         var resourcesId = writer.ReserveObject();
@@ -220,6 +248,8 @@ internal static class DocumentRenderer
         var o = writer.Out;
 
         // Page ids are reserved up front so links can point to later pages.
+        var annotations = new List<(StructureElement? Structure, int Id)>();
+        var fieldIds = new List<int>();
         var pageIds = new int[pages.Count];
         for (var i = 0; i < pages.Count; i++)
             pageIds[i] = writer.ReserveObject();
@@ -232,15 +262,19 @@ internal static class DocumentRenderer
             // Links to unknown sections are dropped.
             var links = page.Links.Where(link => link.Uri != null || context.Sections.ContainsKey(link.Section!)).ToArray();
             var linkIds = links.Select(_ => writer.ReserveObject()).ToArray();
+            var widgetIds = page.Fields.Select(_ => writer.ReserveObject()).ToArray();
 
             writer.BeginObject(pageIds[i]);
             o.Ascii("<</Type/Page/Parent ").Int(pagesId).Ascii(" 0 R/MediaBox[0 0 ")
                 .Real(page.Size.Width).Space().Real(page.Size.Height)
                 .Ascii("]/Resources ").Int(resourcesId).Ascii(" 0 R/Contents ").Int(contentId).Ascii(" 0 R");
-            if (linkIds.Length > 0)
+
+            if (context.Structure != null)
+                o.Ascii("/StructParents ").Int(i).Ascii("/Tabs/S");
+            if (linkIds.Length > 0 || widgetIds.Length > 0)
             {
                 o.Ascii("/Annots[");
-                foreach (var id in linkIds)
+                foreach (var id in linkIds.Concat(widgetIds))
                     o.Int(id).Ascii(" 0 R ");
                 o.Ascii("]");
             }
@@ -256,7 +290,18 @@ internal static class DocumentRenderer
             page.Compressed = null;
 
             for (var l = 0; l < links.Length; l++)
-                WriteLink(writer, linkIds[l], links[l], context.Sections, pageIds);
+            {
+                annotations.Add((links[l].Structure, linkIds[l]));
+                WriteLink(writer, linkIds[l], links[l], context.Sections, pageIds, standard != PdfStandard.None, context.Structure != null ? pages.Count + annotations.Count - 1 : -1);
+            }
+
+            for (var f = 0; f < page.Fields.Length; f++)
+            {
+                annotations.Add((page.Fields[f].Structure, widgetIds[f]));
+                fieldIds.Add(widgetIds[f]);
+                FormWriter.Write(writer, widgetIds[f], page.Fields[f], resources, resourcesId,
+                    context.Structure != null ? pages.Count + annotations.Count - 1 : -1, level);
+            }
         }
 
         var fontIds = new List<(string Name, int Id)>();
@@ -266,6 +311,14 @@ internal static class DocumentRenderer
         var imageIds = new List<(string Name, int Id)>();
         foreach (var image in images)
             imageIds.Add((image.Name, WriteImage(writer, image.Image.Encoded)));
+
+        var shadingIds = new List<(string Name, int Id)>();
+        foreach (var (name, shading) in resources.Shadings)
+            shadingIds.Add((name, WriteShadingPattern(writer, shading)));
+
+        var maskIds = new List<(string Name, int Id)>();
+        foreach (var (name, shading, width, height) in resources.SoftMasks)
+            maskIds.Add((name, WriteSoftMask(writer, shading, width, height, level != null)));
 
         writer.BeginObject(resourcesId);
         o.Ascii("<<");
@@ -285,6 +338,26 @@ internal static class DocumentRenderer
             o.Ascii(">>");
         }
 
+        if (resources.Opacities.Count > 0 || maskIds.Count > 0)
+        {
+            o.Ascii("/ExtGState<<");
+            foreach (var (alpha, name) in resources.Opacities)
+                o.Byte((byte)'/').Ascii(name).Ascii("<</ca ").Real(alpha).Ascii("/CA ").Real(alpha).Ascii(">>");
+
+            foreach (var (name, id) in maskIds)
+                o.Byte((byte)'/').Ascii(name).Space().Int(id).Ascii(" 0 R");
+
+            o.Ascii(">>");
+        }
+
+        if (shadingIds.Count > 0)
+        {
+            o.Ascii("/Pattern<<");
+            foreach (var (name, id) in shadingIds)
+                o.Byte((byte)'/').Ascii(name).Space().Int(id).Ascii(" 0 R");
+            o.Ascii(">>");
+        }
+
         o.Ascii(">>");
         writer.EndObject();
 
@@ -297,38 +370,474 @@ internal static class DocumentRenderer
 
         var outlinesId = WriteOutline(writer, context.Bookmarks, pageIds);
 
+        // Attachments, sorted by name as the embedded files name tree requires.
+        var files = attachments
+            .OrderBy(a => a.FileName, StringComparer.Ordinal)
+            .Select(a => (a.FileName, Id: WriteAttachment(writer, a, level, metadata.CreationDate)))
+            .ToList();
+
+        var date = metadata.CreationDate ?? DateTimeOffset.Now;
+        var metadataId = 0;
+        var outputIntentProfileId = 0;
+        if (standard != PdfStandard.None || settings.Tagged)
+        {
+            var part = standard switch { PdfStandard.PdfA2b => 2, PdfStandard.PdfA3b => 3, _ => 0 };
+            metadataId = writer.ReserveObject();
+
+            // The XMP packet stays uncompressed so that tools can read it without parsing the whole file.
+            writer.WriteStream(metadataId, XmpMetadata.Create(metadata, date, part, settings.Tagged),
+                b => b.Ascii("/Type/Metadata/Subtype/XML"), flateEncoded: false);
+        }
+
+        if (standard != PdfStandard.None)
+        {
+            var profile = IccProfile.CreateSrgb();
+            outputIntentProfileId = writer.ReserveObject();
+            writer.WriteStream(outputIntentProfileId, level is { } profileLevel ? PdfWriter.Deflate(profile, profileLevel) : profile,
+                b => b.Ascii("/N 3"), level != null);
+        }
+
+        var structureId = context.Structure is { } structure
+            ? WriteStructure(writer, structure, pageIds, annotations, metadata)
+            : 0;
+
         writer.BeginObject(catalogId);
         o.Ascii("<</Type/Catalog/Pages ").Int(pagesId).Ascii(" 0 R");
+        if (structureId != 0)
+        {
+            o.Ascii("/StructTreeRoot ").Int(structureId).Ascii(" 0 R/MarkInfo<</Marked true>>")
+                .Ascii("/ViewerPreferences<</DisplayDocTitle true>>");
+        }
+
+        if (fieldIds.Count > 0)
+        {
+            o.Ascii("/AcroForm<</Fields[");
+            foreach (var id in fieldIds)
+                o.Int(id).Ascii(" 0 R ");
+
+            // Papira draws every appearance itself, so a viewer has nothing left to regenerate.
+            o.Ascii("]/NeedAppearances false/DR ").Int(resourcesId).Ascii(" 0 R/DA");
+            writer.AsciiString(FormWriter.DefaultAppearance(
+                resources.GetFont(formFields[0].Style!.Font.Font).Name, formFields[0]));
+            o.Ascii(">>");
+        }
+
+        if (!string.IsNullOrEmpty(metadata.Language))
+            o.Ascii("/Lang").AsciiString(metadata.Language);
+        if (metadataId != 0)
+            o.Ascii("/Metadata ").Int(metadataId).Ascii(" 0 R");
+
+        if (outputIntentProfileId != 0)
+        {
+            o.Ascii("/OutputIntents[<</Type/OutputIntent/S/GTS_PDFA1/OutputConditionIdentifier(sRGB)")
+                .Ascii("/Info(sRGB IEC61966-2.1)/RegistryName(http://www.color.org)/DestOutputProfile ")
+                .Int(outputIntentProfileId).Ascii(" 0 R>>]");
+        }
+
         if (outlinesId != 0)
             o.Ascii("/Outlines ").Int(outlinesId).Ascii(" 0 R/PageMode/UseOutlines");
+
+        if (files.Count > 0)
+        {
+            o.Ascii("/Names<</EmbeddedFiles<</Names[");
+            foreach (var (name, id) in files)
+                o.TextString(name).Space().Int(id).Ascii(" 0 R ");
+            o.Ascii("]>>>>/AF[");
+            foreach (var (_, id) in files)
+                o.Int(id).Ascii(" 0 R ");
+            o.Ascii("]");
+        }
+
         o.Ascii(">>");
         writer.EndObject();
 
         WriteInfo(writer, infoId, metadata);
 
-        writer.WriteTrailer(catalogId, infoId);
+        var encryptId = 0;
+        if (encryptor != null)
+        {
+            encryptId = writer.ReserveObject();
+            writer.BeginObject(encryptId);
+            o.Ascii("<</Filter/Standard/V 5/R 6/Length 256")
+                .Ascii("/CF<</StdCF<</CFM/AESV3/AuthEvent/DocOpen/Length 32>>>>/StmF/StdCF/StrF/StdCF")
+                .Ascii("/P ").Int(encryptor.Permissions).Ascii("/EncryptMetadata true");
+
+            // The entries of the encryption dictionary itself are never encrypted.
+            WriteRawHex(o, "/O", encryptor.O);
+            WriteRawHex(o, "/U", encryptor.U);
+            WriteRawHex(o, "/OE", encryptor.OwnerKey);
+            WriteRawHex(o, "/UE", encryptor.UserKey);
+            WriteRawHex(o, "/Perms", encryptor.Perms);
+            o.Ascii(">>");
+            writer.EndObject();
+        }
+
+        writer.WriteTrailer(catalogId, infoId, encryptId);
+    }
+
+    private static void WriteRawHex(ByteBuffer o, string key, byte[] data)
+    {
+        o.Ascii(key).Byte((byte)'<');
+        foreach (var b in data)
+            o.Hex8(b);
+        o.Byte((byte)'>');
+    }
+
+    /// <summary>The /P value: every reserved bit is set, the bits of denied permissions are cleared.</summary>
+    private static int PermissionBits(PdfPermissions permissions)
+    {
+        var bits = -1 & ~3; // bits 1 and 2 are always zero
+        void Deny(PdfPermissions permission, int bit)
+        {
+            if (!permissions.HasFlag(permission))
+                bits &= ~(1 << (bit - 1));
+        }
+
+        Deny(PdfPermissions.Print, 3);
+        Deny(PdfPermissions.ModifyContents, 4);
+        Deny(PdfPermissions.CopyContent, 5);
+        Deny(PdfPermissions.Annotate, 6);
+        Deny(PdfPermissions.FillForms, 9);
+        Deny(PdfPermissions.ExtractForAccessibility, 10);
+        Deny(PdfPermissions.AssembleDocument, 11);
+        Deny(PdfPermissions.PrintHighResolution, 12);
+        return bits;
+    }
+
+    /// <summary>Writes an embedded file and the file specification that refers to it.</summary>
+    private static int WriteAttachment(PdfWriter writer, DocumentAttachment attachment, CompressionLevel? level, DateTimeOffset? documentDate)
+    {
+        var data = level is { } compression ? PdfWriter.Deflate(attachment.Data, compression) : attachment.Data;
+        var streamId = writer.ReserveObject();
+        var date = PdfDate(attachment.ModificationDate ?? documentDate ?? DateTimeOffset.Now);
+
+        writer.WriteStream(streamId, data, b =>
+        {
+            b.Ascii("/Type/EmbeddedFile/Subtype").Name(attachment.MediaType)
+                .Ascii("/Params<</Size ").Int(attachment.Data.Length).Ascii("/ModDate");
+            writer.AsciiString(date);
+            b.Ascii(">>");
+        }, level != null);
+
+        var fileSpecId = writer.ReserveObject();
+        var o = writer.Out;
+        writer.BeginObject(fileSpecId);
+        o.Ascii("<</Type/Filespec/F");
+        writer.TextString(attachment.FileName);
+        o.Ascii("/UF");
+        writer.TextString(attachment.FileName);
+        if (!string.IsNullOrEmpty(attachment.Description))
+        {
+            o.Ascii("/Desc");
+            writer.TextString(attachment.Description);
+        }
+
+        o.Ascii("/AFRelationship/").Ascii(attachment.Relationship.ToString())
+            .Ascii("/EF<</F ").Int(streamId).Ascii(" 0 R/UF ").Int(streamId).Ascii(" 0 R>>>>");
+        writer.EndObject();
+        return fileSpecId;
+    }
+
+    /// <summary>Writes a gradient as a shading pattern; the stops become an exponential or stitching function.</summary>
+    private static int WriteShadingPattern(PdfWriter writer, Shading shading)
+    {
+        var id = writer.ReserveObject();
+        var o = writer.Out;
+        var m = shading.Matrix;
+
+        writer.BeginObject(id);
+        o.Ascii("<</Type/Pattern/PatternType 2/Matrix[")
+            .Real(m.A).Space().Real(m.B).Space().Real(m.C).Space().Real(m.D).Space().Real(m.E).Space().Real(m.F)
+            .Ascii("]/Shading<</ShadingType ").Int(shading.Radial ? 3 : 2).Ascii("/ColorSpace/DeviceRGB/Coords[");
+
+        WriteCoordinates(o, shading);
+        o.Ascii("]/Extend[true true]/Function");
+        WriteStopFunction(o, shading.Stops);
+        o.Ascii(">>>>");
+        writer.EndObject();
+        return id;
+    }
+
+    /// <summary>
+    /// A graphics state whose soft mask carries the transparency of a gradient. The mask is a form drawn
+    /// in shades of grey — white where the gradient is opaque, black where it is not — which the reader
+    /// then reads as the transparency of everything painted while the state is in effect.
+    /// </summary>
+    private static int WriteSoftMask(PdfWriter writer, Shading shading, float width, float height, bool compressed)
+    {
+        var patternId = writer.ReserveObject();
+        var formId = writer.ReserveObject();
+        var stateId = writer.ReserveObject();
+        var o = writer.Out;
+        var m = shading.Matrix;
+
+        writer.BeginObject(patternId);
+        o.Ascii("<</Type/Pattern/PatternType 2/Matrix[")
+            .Real(m.A).Space().Real(m.B).Space().Real(m.C).Space().Real(m.D).Space().Real(m.E).Space().Real(m.F)
+            .Ascii("]/Shading<</ShadingType ").Int(shading.Radial ? 3 : 2).Ascii("/ColorSpace/DeviceGray/Coords[");
+
+        WriteCoordinates(o, shading);
+        o.Ascii("]/Extend[true true]/Function");
+        WriteAlphaFunction(o, shading.Stops);
+        o.Ascii(">>>>");
+        writer.EndObject();
+
+        using var content = new ByteBuffer(64);
+        content.Ascii("/Pattern cs /P0 scn 0 0 ").Real(width).Space().Real(height).Ascii(" re f\n");
+
+        writer.WriteStream(
+            formId,
+            content.ToArray(),
+            b => b.Ascii("/Type/XObject/Subtype/Form/FormType 1/BBox[0 0 ").Real(width).Space().Real(height)
+                .Ascii("]/Group<</Type/Group/S/Transparency/CS/DeviceGray/I false/K false>>/Resources<</Pattern<</P0 ")
+                .Int(patternId).Ascii(" 0 R>>>>"),
+            compressed);
+
+        writer.BeginObject(stateId);
+        o.Ascii("<</Type/ExtGState/SMask<</Type/Mask/S/Luminosity/BC[0]/G ").Int(formId).Ascii(" 0 R>>>>");
+        writer.EndObject();
+        return stateId;
+    }
+
+    private static void WriteCoordinates(ByteBuffer o, Shading shading)
+    {
+        if (shading.Radial)
+        {
+            o.Real(shading.X0).Space().Real(shading.Y0).Space().Real(shading.Radius0).Space()
+                .Real(shading.X1).Space().Real(shading.Y1).Space().Real(shading.Radius1);
+        }
+        else
+        {
+            o.Real(shading.X0).Space().Real(shading.Y0).Space().Real(shading.X1).Space().Real(shading.Y1);
+        }
+    }
+
+    /// <summary>The same stops as the colours, in shades of grey that stand for their transparency.</summary>
+    private static void WriteAlphaFunction(ByteBuffer o, ColorStop[] stops)
+    {
+        if (stops.Length == 2)
+        {
+            WriteSegment(o, stops[0].Alpha, stops[1].Alpha);
+            return;
+        }
+
+        o.Ascii("<</FunctionType 3/Domain[0 1]/Functions[");
+        for (var i = 0; i + 1 < stops.Length; i++)
+            WriteSegment(o, stops[i].Alpha, stops[i + 1].Alpha);
+
+        o.Ascii("]/Bounds[");
+        for (var i = 1; i + 1 < stops.Length; i++)
+            o.Real(stops[i].Offset).Space();
+
+        o.Ascii("]/Encode[");
+        for (var i = 0; i + 1 < stops.Length; i++)
+            o.Ascii("0 1 ");
+
+        o.Ascii("]>>");
+
+        static void WriteSegment(ByteBuffer o, float from, float to) =>
+            o.Ascii("<</FunctionType 2/Domain[0 1]/N 1/C0[").Real(from).Ascii("]/C1[").Real(to).Ascii("]>>");
+    }
+
+    private static void WriteStopFunction(ByteBuffer o, ColorStop[] stops)
+    {
+        if (stops.Length == 2)
+        {
+            WriteSegment(o, stops[0].Color, stops[1].Color);
+            return;
+        }
+
+        // Several stops: one segment per pair, stitched at the stop offsets.
+        o.Ascii("<</FunctionType 3/Domain[0 1]/Functions[");
+        for (var i = 0; i + 1 < stops.Length; i++)
+            WriteSegment(o, stops[i].Color, stops[i + 1].Color);
+
+        o.Ascii("]/Bounds[");
+        for (var i = 1; i + 1 < stops.Length; i++)
+            o.Real(stops[i].Offset).Space();
+
+        o.Ascii("]/Encode[");
+        for (var i = 0; i + 1 < stops.Length; i++)
+            o.Ascii("0 1 ");
+        o.Ascii("]>>");
+
+        static void WriteSegment(ByteBuffer o, Color from, Color to) =>
+            o.Ascii("<</FunctionType 2/Domain[0 1]/N 1/C0[")
+                .Real(from.R / 255.0).Space().Real(from.G / 255.0).Space().Real(from.B / 255.0)
+                .Ascii("]/C1[")
+                .Real(to.R / 255.0).Space().Real(to.G / 255.0).Space().Real(to.B / 255.0)
+                .Ascii("]>>");
+    }
+
+    /// <summary>
+    /// Writes the structure of a tagged document: one object per element, a tree that mirrors what the
+    /// document says, and the number tree that leads from a piece of a page back to the element it
+    /// belongs to. This is what a reader for the blind follows instead of the page itself.
+    /// </summary>
+    private static int WriteStructure(
+        PdfWriter writer,
+        StructureTree structure,
+        int[] pageIds,
+        List<(StructureElement? Structure, int Id)> links,
+        DocumentMetadata metadata)
+    {
+        var o = writer.Out;
+        var rootId = writer.ReserveObject();
+
+        var elements = StructureTree.Flatten(structure.Root).ToList();
+        foreach (var element in elements)
+            element.Id = writer.ReserveObject();
+
+        // Which element each piece of content belongs to, page by page, and which one each link belongs to.
+        var owners = new Dictionary<int, StructureElement[]>();
+        for (var page = 0; page < pageIds.Length; page++)
+            owners[page] = new StructureElement[structure.MarkedContentCount(page)];
+
+        foreach (var element in elements)
+        {
+            foreach (var child in element.Children)
+            {
+                if (child is MarkedContent content && owners.TryGetValue(content.Page, out var page) && content.Mcid < page.Length)
+                    page[content.Mcid] = element;
+            }
+        }
+
+        foreach (var element in elements)
+        {
+            writer.BeginObject(element.Id);
+            o.Ascii("<</Type/StructElem/S/").Ascii(element.Role);
+            o.Ascii("/P ").Int(element.Parent?.Id ?? rootId).Ascii(" 0 R");
+
+            // The layout attributes of a table cell: which cells a header heads, and how far a cell reaches.
+            if (element.Role is "TH" or "TD" && (element.Role == "TH" || element.ColumnSpan > 1 || element.RowSpan > 1))
+            {
+                o.Ascii("/A<</O/Table");
+                if (element.Role == "TH")
+                    o.Ascii("/Scope/Column");
+                if (element.ColumnSpan > 1)
+                    o.Ascii("/ColSpan ").Int(element.ColumnSpan);
+                if (element.RowSpan > 1)
+                    o.Ascii("/RowSpan ").Int(element.RowSpan);
+
+                o.Ascii(">>");
+            }
+
+            if (!string.IsNullOrEmpty(element.Alt))
+            {
+                o.Ascii("/Alt");
+                writer.TextString(element.Alt);
+            }
+
+            // The page a piece of content sits on has to be named before it can be pointed at.
+            var firstPage = element.Children.OfType<MarkedContent>().Select(content => content.Page).DefaultIfEmpty(-1).First();
+            if (firstPage >= 0)
+                o.Ascii("/Pg ").Int(pageIds[firstPage]).Ascii(" 0 R");
+
+            o.Ascii("/K[");
+            foreach (var child in element.Children)
+            {
+                switch (child)
+                {
+                    case StructureElement nested:
+                        o.Int(nested.Id).Ascii(" 0 R ");
+                        break;
+                    case MarkedContent content when content.Page == firstPage:
+                        o.Int(content.Mcid).Space();
+                        break;
+                    case MarkedContent content:
+                        o.Ascii("<</Type/MCR/Pg ").Int(pageIds[content.Page]).Ascii(" 0 R/MCID ").Int(content.Mcid).Ascii(">> ");
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            // A link also holds the annotation a reader activates.
+            foreach (var (owner, id) in links)
+            {
+                if (ReferenceEquals(owner, element))
+                    o.Ascii("<</Type/OBJR/Obj ").Int(id).Ascii(" 0 R>> ");
+            }
+
+            o.Ascii("]>>");
+            writer.EndObject();
+        }
+
+        // The number tree: one entry per page, holding the element of each piece of content on it, and
+        // one entry per link annotation.
+        var parentTreeId = writer.ReserveObject();
+        writer.BeginObject(parentTreeId);
+        o.Ascii("<</Nums[");
+
+        for (var page = 0; page < pageIds.Length; page++)
+        {
+            o.Int(page).Ascii("[");
+            foreach (var owner in owners[page])
+                o.Int((owner ?? structure.Root).Id).Ascii(" 0 R ");
+
+            o.Ascii("]");
+        }
+
+        for (var i = 0; i < links.Count; i++)
+        {
+            var owner = links[i].Structure ?? structure.Root;
+            o.Int(pageIds.Length + i).Space().Int(owner.Id).Ascii(" 0 R ");
+        }
+
+        o.Ascii("]>>");
+        writer.EndObject();
+
+        writer.BeginObject(rootId);
+        o.Ascii("<</Type/StructTreeRoot/K[").Int(structure.Root.Id).Ascii(" 0 R]/ParentTree ").Int(parentTreeId)
+            .Ascii(" 0 R/ParentTreeNextKey ").Int(pageIds.Length + links.Count).Ascii(">>");
+        writer.EndObject();
+
+        _ = metadata;
+        return rootId;
     }
 
     private static void WriteDestination(ByteBuffer o, Destination destination, int[] pageIds) =>
         o.Ascii("[").Int(pageIds[destination.PageIndex]).Ascii(" 0 R/XYZ ")
             .Real(destination.X).Space().Real(destination.Y).Ascii(" null]");
 
-    private static void WriteLink(PdfWriter writer, int id, LinkArea link, Dictionary<string, Destination> sections, int[] pageIds)
+    private static void WriteLink(PdfWriter writer, int id, LinkArea link, Dictionary<string, Destination> sections, int[] pageIds, bool withAppearance, int structParent)
     {
         var o = writer.Out;
+
+        // PDF/A wants an appearance stream on annotations; an empty form is enough for a link.
+        var appearanceId = 0;
+        if (withAppearance)
+        {
+            appearanceId = writer.ReserveObject();
+            writer.WriteStream(appearanceId, [], b => b
+                .Ascii("/Type/XObject/Subtype/Form/Resources<<>>/BBox[0 0 ")
+                .Real(link.Right - link.Left).Space().Real(link.Top - link.Bottom).Ascii("]"), flateEncoded: false);
+        }
+
         writer.BeginObject(id);
         o.Ascii("<</Type/Annot/Subtype/Link/F 4/Border[0 0 0]/Rect[")
             .Real(link.Left).Space().Real(link.Bottom).Space().Real(link.Right).Space().Real(link.Top).Ascii("]");
 
+        if (structParent >= 0)
+        {
+            o.Ascii("/StructParent ").Int(structParent).Ascii("/Contents");
+            writer.TextString(link.Uri ?? link.Section ?? string.Empty);
+        }
+
         if (link.Uri != null)
         {
-            o.Ascii("/A<</S/URI/URI").AsciiString(link.Uri).Ascii(">>");
+            o.Ascii("/A<</S/URI/URI");
+            writer.AsciiString(link.Uri);
+            o.Ascii(">>");
         }
         else
         {
             o.Ascii("/Dest");
             WriteDestination(o, sections[link.Section!], pageIds);
         }
+
+        if (appearanceId != 0)
+            o.Ascii("/AP<</N ").Int(appearanceId).Ascii(" 0 R>>");
 
         o.Ascii(">>");
         writer.EndObject();
@@ -380,7 +889,9 @@ internal static class DocumentRenderer
             }
             else
             {
-                o.Ascii("/Title").TextString(node.Bookmark!.Value.Title).Ascii("/Parent ").Int(parent.Id).Ascii(" 0 R");
+                o.Ascii("/Title");
+                writer.TextString(node.Bookmark!.Value.Title);
+                o.Ascii("/Parent ").Int(parent.Id).Ascii(" 0 R");
                 if (previous != null) o.Ascii("/Prev ").Int(previous.Id).Ascii(" 0 R");
                 if (next != null) o.Ascii("/Next ").Int(next.Id).Ascii(" 0 R");
                 o.Ascii("/Dest");
@@ -422,13 +933,6 @@ internal static class DocumentRenderer
 
         output.Glyphs = glyphs.ToArray();
 
-        var program = FontSubsetter.Subset(usage.Font, glyphs);
-        output.ProgramLength = program.Length;
-        output.Program = level is { } l ? PdfWriter.Deflate(program, l) : program;
-
-        var cmap = BuildToUnicode(output.Glyphs, map);
-        output.ToUnicode = level is { } l2 ? PdfWriter.Deflate(cmap, l2) : cmap;
-
         // Subset prefix: six capitals derived from the font name and glyph set (stable across runs).
         var hash = 14695981039346656037UL; // FNV-1a
         foreach (var c in usage.Font.PostScriptName)
@@ -444,9 +948,16 @@ internal static class DocumentRenderer
         }
 
         output.BaseFont = new string(tag) + "+" + usage.Font.PostScriptName;
+
+        var program = FontSubsetter.Subset(usage.Font, glyphs, output.BaseFont);
+        output.ProgramLength = program.Length;
+        output.Program = level is { } l ? PdfWriter.Deflate(program, l) : program;
+
+        var cmap = BuildToUnicode(output.Glyphs, map, usage.GlyphToText);
+        output.ToUnicode = level is { } l2 ? PdfWriter.Deflate(cmap, l2) : cmap;
     }
 
-    private static byte[] BuildToUnicode(ushort[] glyphs, int[] map)
+    private static byte[] BuildToUnicode(ushort[] glyphs, int[] map, Dictionary<ushort, int[]> sequences)
     {
         using var b = new ByteBuffer(256 + glyphs.Length * 20);
         b.Ascii("/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n")
@@ -464,15 +975,16 @@ internal static class DocumentRenderer
             {
                 var glyph = mapped[i];
                 b.Byte((byte)'<').Hex16(glyph).Ascii("><");
-                var codepoint = map[glyph];
-                if (codepoint > 0xFFFF)
+
+                // A ligature glyph extracts as every character it replaced.
+                if (sequences.TryGetValue(glyph, out var sequence))
                 {
-                    new System.Text.Rune(codepoint).EncodeToUtf16(pair);
-                    b.Hex16(pair[0]).Hex16(pair[1]);
+                    foreach (var value in sequence)
+                        WriteCodepoint(b, value, pair);
                 }
                 else
                 {
-                    b.Hex16((ushort)codepoint);
+                    WriteCodepoint(b, map[glyph], pair);
                 }
 
                 b.Ascii(">\n");
@@ -483,6 +995,19 @@ internal static class DocumentRenderer
 
         b.Ascii("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
         return b.ToArray();
+
+        static void WriteCodepoint(ByteBuffer b, int codepoint, Span<char> pair)
+        {
+            if (codepoint > 0xFFFF)
+            {
+                new System.Text.Rune(codepoint).EncodeToUtf16(pair);
+                b.Hex16(pair[0]).Hex16(pair[1]);
+            }
+            else
+            {
+                b.Hex16((ushort)Math.Max(codepoint, 0));
+            }
+        }
     }
 
     private static int WriteFont(PdfWriter writer, FontOutput output, bool compressed)
@@ -502,9 +1027,16 @@ internal static class DocumentRenderer
         writer.EndObject();
 
         writer.BeginObject(cidFontId);
-        o.Ascii("<</Type/Font/Subtype/CIDFontType2/BaseFont/").Ascii(output.BaseFont)
+        // Compact Font Format outlines are embedded as a CID-keyed font of type 0; TrueType glyphs as type 2.
+        var cff = font.IsCff;
+        o.Ascii("<</Type/Font/Subtype/").Ascii(cff ? "CIDFontType0" : "CIDFontType2").Ascii("/BaseFont/").Ascii(output.BaseFont)
             .Ascii("/CIDSystemInfo<</Registry(Adobe)/Ordering(Identity)/Supplement 0>>/FontDescriptor ").Int(descriptorId)
-            .Ascii(" 0 R/CIDToGIDMap/Identity/W[");
+            .Ascii(" 0 R");
+
+        if (!cff)
+            o.Ascii("/CIDToGIDMap/Identity");
+
+        o.Ascii("/W[");
 
         var glyphs = output.Glyphs;
         for (var i = 0; i < glyphs.Length;)
@@ -540,11 +1072,21 @@ internal static class DocumentRenderer
             .Ascii("/Descent ").Real(Math.Round(Scale(font.Descender)))
             .Ascii("/CapHeight ").Real(Math.Round(Scale(font.CapHeight)))
             .Ascii("/StemV ").Int(font.Info.Weight >= 600 ? 120 : 80)
-            .Ascii("/FontFile2 ").Int(programId).Ascii(" 0 R>>");
+            .Ascii(cff ? "/FontFile3 " : "/FontFile2 ").Int(programId).Ascii(" 0 R>>");
         writer.EndObject();
 
         var length = output.ProgramLength;
-        writer.WriteStream(programId, output.Program, b => b.Ascii("/Length1 ").Int(length), compressed);
+        writer.WriteStream(
+            programId,
+            output.Program,
+            b =>
+            {
+                if (cff)
+                    b.Ascii("/Subtype/CIDFontType0C");
+                else
+                    b.Ascii("/Length1 ").Int(length);
+            },
+            compressed);
         writer.WriteStream(toUnicodeId, output.ToUnicode, null, compressed);
 
         return type0Id;
@@ -576,6 +1118,15 @@ internal static class DocumentRenderer
         return id;
     }
 
+    /// <summary>A date in PDF syntax, e.g. <c>D:20260927T…</c> with the UTC offset.</summary>
+    private static string PdfDate(DateTimeOffset date)
+    {
+        var offset = date.Offset;
+        var sign = offset < TimeSpan.Zero ? '-' : '+';
+        return string.Create(CultureInfo.InvariantCulture,
+            $"D:{date:yyyyMMddHHmmss}{sign}{Math.Abs(offset.Hours):00}'{Math.Abs(offset.Minutes):00}'");
+    }
+
     private static void WriteInfo(PdfWriter writer, int infoId, DocumentMetadata metadata)
     {
         var o = writer.Out;
@@ -584,8 +1135,11 @@ internal static class DocumentRenderer
 
         void Entry(string key, string? value)
         {
-            if (!string.IsNullOrEmpty(value))
-                o.Byte((byte)'/').Ascii(key).TextString(value);
+            if (string.IsNullOrEmpty(value))
+                return;
+
+            o.Byte((byte)'/').Ascii(key);
+            writer.TextString(value);
         }
 
         Entry("Title", metadata.Title);
@@ -595,12 +1149,12 @@ internal static class DocumentRenderer
         Entry("Creator", metadata.Creator);
         Entry("Producer", metadata.Producer);
 
-        var date = metadata.CreationDate ?? DateTimeOffset.Now;
-        var offset = date.Offset;
-        var sign = offset < TimeSpan.Zero ? '-' : '+';
-        var pdfDate = string.Create(CultureInfo.InvariantCulture,
-            $"D:{date:yyyyMMddHHmmss}{sign}{Math.Abs(offset.Hours):00}'{Math.Abs(offset.Minutes):00}'");
-        o.Ascii("/CreationDate(").Ascii(pdfDate).Ascii(")/ModDate(").Ascii(pdfDate).Ascii(")>>");
+        var pdfDate = PdfDate(metadata.CreationDate ?? DateTimeOffset.Now);
+        o.Ascii("/CreationDate");
+        writer.AsciiString(pdfDate);
+        o.Ascii("/ModDate");
+        writer.AsciiString(pdfDate);
+        o.Ascii(">>");
         writer.EndObject();
     }
 }

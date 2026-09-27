@@ -4,7 +4,11 @@ namespace Papira.Rendering;
 internal readonly record struct Destination(int PageIndex, float X, float Y);
 
 /// <summary>A clickable area on the current page that opens a URI or jumps to a section.</summary>
-internal readonly record struct LinkArea(float Left, float Bottom, float Right, float Top, string? Uri, string? Section);
+internal readonly record struct LinkArea(float Left, float Bottom, float Right, float Top, string? Uri, string? Section)
+{
+    /// <summary>The element of a tagged document this link belongs to, so that a reader can announce it.</summary>
+    public StructureElement? Structure { get; init; }
+}
 
 internal readonly record struct Bookmark(string Title, int Level, Destination Destination);
 
@@ -35,11 +39,40 @@ internal sealed class LayoutContext(Canvas canvas)
     /// </summary>
     public bool RelaxKeepTogether { get; set; }
 
+    /// <summary>Corner radius applied to backgrounds, borders and gradients below a <c>CornerRadius</c> element.</summary>
+    public float CornerRadius { get; set; }
+
+    /// <summary>
+    /// The structure of the document, when it is being tagged. Elements open a structure element around
+    /// what they draw, so that a reader for the blind is given the meaning of the page and not its layout.
+    /// </summary>
+    public StructureTree? Structure { get; set; }
+
+    /// <summary>
+    /// Set while drawing page furniture — a header, a footer, a watermark. Such content is not part of
+    /// what the document says, so it is marked as an artifact instead of being given a structure element.
+    /// </summary>
+    public bool Artifact { get; set; }
+
+    /// <summary>
+    /// Opens a structure element around what is drawn next, when the document is being tagged. With
+    /// <paramref name="content"/> the element also holds the drawing itself; without it, it only holds
+    /// the elements opened inside it, as a table holds its rows.
+    /// </summary>
+    public TagScope Tag(string role, string? alt = null, bool content = true) =>
+        Structure is { } tree && !Artifact ? new TagScope(this, tree, role, alt, content) : default;
+
+    /// <summary>The structure element that is open right now, if any.</summary>
+    public StructureElement? CurrentStructure { get; set; }
+
     /// <summary>Height of the content area (between header and footer) of the current page.</summary>
     public float BodyHeight { get; set; } = float.MaxValue;
 
     /// <summary>Link areas of the page being laid out; collected by the renderer after each page.</summary>
     public List<LinkArea> PageLinks { get; } = [];
+
+    /// <summary>Form fields placed on the page being laid out; collected by the renderer after each page.</summary>
+    public List<Elements.FormField> PageFormFields { get; } = [];
 
     /// <summary>Named sections (first occurrence wins), targets of internal links.</summary>
     public Dictionary<string, Destination> Sections { get; } = new(StringComparer.Ordinal);
@@ -49,4 +82,35 @@ internal sealed class LayoutContext(Canvas canvas)
 
     /// <summary>Fully resolved default text style in effect for the element being laid out.</summary>
     public TextStyle DefaultStyle { get; set; } = TextStyle.BuiltIn;
+}
+
+/// <summary>Keeps a structure element open for as long as the element that opened it is drawing.</summary>
+internal readonly ref struct TagScope
+{
+    private readonly LayoutContext? _context;
+
+    private readonly StructureElement? _previous;
+
+    public TagScope(LayoutContext context, StructureTree tree, string role, string? alt, bool content)
+    {
+        _context = context;
+        _previous = context.CurrentStructure;
+
+        var element = tree.Push(role);
+        element.Alt = alt;
+        context.CurrentStructure = element;
+
+        if (content)
+            context.Canvas.BeginTagged(role, tree.NextMarkedContent(context.PageNumber - 1));
+    }
+
+    public void Dispose()
+    {
+        if (_context is not { Structure: { } tree })
+            return;
+
+        _context.Canvas.EndTagged();
+        tree.Pop();
+        _context.CurrentStructure = _previous;
+    }
 }

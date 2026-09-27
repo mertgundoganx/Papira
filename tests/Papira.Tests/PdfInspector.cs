@@ -65,9 +65,37 @@ internal sealed partial class PdfInspector
 
     public string Raw => _text;
 
-    /// <summary>Content streams of the pages, in page order.</summary>
-    public IReadOnlyList<string> PageContents() =>
-        Streams().Where(s => s.Contains(" Tj") || s.Contains(" TJ") || s.Contains(" re f") || s.Contains(" Do")).ToList();
+    /// <summary>Content streams of the pages, in page order, resolved through each page's /Contents reference.</summary>
+    public IReadOnlyList<string> PageContents()
+    {
+        var streams = ObjectStreams();
+        return PageContentRegex().Matches(_text)
+            .Select(m => streams[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)])
+            .ToList();
+    }
+
+    /// <summary>Stream contents by object number, inflated when Flate-compressed.</summary>
+    private Dictionary<int, string> ObjectStreams()
+    {
+        var result = new Dictionary<int, string>();
+        foreach (Match match in ObjectStreamRegex().Matches(_text))
+        {
+            var length = int.Parse(match.Groups["len"].Value, CultureInfo.InvariantCulture);
+            var start = match.Index + match.Length;
+            var raw = _data.AsSpan(start, length).ToArray();
+            if (match.Value.Contains("/Filter/FlateDecode"))
+            {
+                using var zlib = new ZLibStream(new MemoryStream(raw), CompressionMode.Decompress);
+                using var output = new MemoryStream();
+                zlib.CopyTo(output);
+                raw = output.ToArray();
+            }
+
+            result[int.Parse(match.Groups["id"].Value, CultureInfo.InvariantCulture)] = Encoding.Latin1.GetString(raw);
+        }
+
+        return result;
+    }
 
     /// <summary>
     /// Text of every glyph run (one line per run), decoded through the ToUnicode maps.
@@ -103,6 +131,50 @@ internal sealed partial class PdfInspector
         }
 
         return runs;
+    }
+
+    /// <summary>
+    /// Every string of the file, decoded: the ones written as text in parentheses and the ones written
+    /// as UTF-16 hex. Used to look for names, tooltips and the options of a dropdown.
+    /// </summary>
+    public List<string> ExtractStrings()
+    {
+        var strings = new List<string>();
+        foreach (Match match in Regex.Matches(_text, @"\((?<literal>(?:\\.|[^()\\])*)\)|<FEFF(?<hex>[0-9A-F]*)>"))
+        {
+            if (match.Groups["hex"].Success)
+            {
+                var hex = match.Groups["hex"].Value;
+                var chars = new char[hex.Length / 4];
+                for (var i = 0; i < chars.Length; i++)
+                    chars[i] = (char)Convert.ToUInt16(hex.Substring(i * 4, 4), 16);
+                strings.Add(new string(chars));
+            }
+            else
+            {
+                strings.Add(Regex.Replace(match.Groups["literal"].Value, @"\\(.)", "$1"));
+            }
+        }
+
+        return strings;
+    }
+
+    /// <summary>The text of the glyph runs of one stream — the appearance of a form field, say.</summary>
+    public string TextIn(string stream)
+    {
+        var map = ToUnicodeMap();
+        var builder = new StringBuilder();
+        foreach (Match run in GlyphRunRegex().Matches(stream))
+        {
+            foreach (Match segment in HexStringRegex().Matches(run.Groups["glyphs"].Value))
+            {
+                var hex = segment.Groups[1].Value;
+                for (var i = 0; i + 4 <= hex.Length; i += 4)
+                    builder.Append(map.TryGetValue(hex.Substring(i, 4), out var text) ? text : "\uFFFD");
+            }
+        }
+
+        return builder.ToString();
     }
 
     private Dictionary<string, string> ToUnicodeMap()
@@ -141,4 +213,10 @@ internal sealed partial class PdfInspector
 
     [GeneratedRegex(@"<</Length (?<len>\d+)[^\n]*>>\nstream\n")]
     private static partial Regex StreamRegex();
+
+    [GeneratedRegex(@"(?<id>\d+) 0 obj\n<</Length (?<len>\d+)[^\n]*>>\nstream\n")]
+    private static partial Regex ObjectStreamRegex();
+
+    [GeneratedRegex(@"/Type/Page/[^>]*?/Contents (\d+) 0 R")]
+    private static partial Regex PageContentRegex();
 }

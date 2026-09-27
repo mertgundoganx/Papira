@@ -132,6 +132,21 @@ internal sealed class ByteBuffer : IDisposable
         return this;
     }
 
+    /// <summary>Writes a name object such as <c>/text#2Fxml</c>, escaping characters that names may not contain.</summary>
+    public ByteBuffer Name(string value)
+    {
+        Byte((byte)'/');
+        foreach (var c in value)
+        {
+            if (c is > ' ' and < (char)127 and not ('#' or '/' or '%' or '(' or ')' or '<' or '>' or '[' or ']' or '{' or '}'))
+                Byte((byte)c);
+            else
+                Byte((byte)'#').Hex8((byte)c);
+        }
+
+        return this;
+    }
+
     /// <summary>Writes a text string as UTF-16BE hex string with BOM, safe for any Unicode content.</summary>
     public ByteBuffer TextString(string value)
     {

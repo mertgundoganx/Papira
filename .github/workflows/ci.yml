@@ -81,6 +81,10 @@ jobs:
         run: |
           dotnet run -c Release --project samples/Papira.Samples -- invoice
           dotnet run -c Release --project samples/Papira.Samples -- features
+          dotnet run -c Release --project samples/Papira.Samples -- archive
+          dotnet run -c Release --project samples/Papira.Samples -- accessible
+          dotnet run -c Release --project samples/Papira.Samples -- form
+          dotnet run -c Release --project samples/Papira.Samples -- html
 
       - name: Check PDF structure with qpdf
         run: |
@@ -88,6 +92,38 @@ jobs:
             echo "Checking $f"
             qpdf --check "$f"
           done
+
+      - name: Install veraPDF
+        run: |
+          curl -sL -o verapdf-installer.zip https://software.verapdf.org/releases/verapdf-installer.zip
+          unzip -q verapdf-installer.zip -d verapdf-installer
+          cat > auto-install.xml <<'XML'
+          <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+          <AutomatedInstallation langpack="eng">
+            <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>
+            <com.izforge.izpack.panels.target.TargetPanel id="install_dir"><installpath>${{ github.workspace }}/verapdf</installpath></com.izforge.izpack.panels.target.TargetPanel>
+            <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">
+              <pack index="0" name="veraPDF GUI" selected="true"/>
+              <pack index="1" name="veraPDF Mac and *nix Scripts" selected="true"/>
+              <pack index="3" name="veraPDF Validation model" selected="true"/>
+            </com.izforge.izpack.panels.packs.PacksPanel>
+            <com.izforge.izpack.panels.install.InstallPanel id="install"/>
+            <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>
+          </AutomatedInstallation>
+          XML
+          java -jar verapdf-installer/*/verapdf-izpack-installer-*.jar auto-install.xml
+
+      - name: Validate the archivable invoice against PDF/A-3b
+        run: ./verapdf/verapdf -f 3b --format text samples/Papira.Samples/bin/Release/net10.0/output/archive.pdf
+
+      - name: Validate the accessible report against PDF/UA-1
+        run: ./verapdf/verapdf -f ua1 --format text samples/Papira.Samples/bin/Release/net10.0/output/accessible.pdf
+
+      - name: Validate the fillable form against PDF/UA-1
+        run: ./verapdf/verapdf -f ua1 --format text samples/Papira.Samples/bin/Release/net10.0/output/form.pdf
+
+      - name: Validate the HTML report against PDF/UA-1
+        run: ./verapdf/verapdf -f ua1 --format text samples/Papira.Samples/bin/Release/net10.0/output/html.pdf
 
       - uses: actions/upload-artifact@v7
         with:

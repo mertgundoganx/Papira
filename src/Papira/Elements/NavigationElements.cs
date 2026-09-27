@@ -23,11 +23,13 @@ internal sealed class LinkElement : ContainerElement
     {
         // The link covers the allocated width and the height of the part drawn on this page.
         var plan = Child.Measure(available, context);
+        using var tag = context.Tag("Link", content: false);
+
         if (plan.HasContent)
         {
             var (left, top) = context.Canvas.ToPdf(0, 0);
             var (right, bottom) = context.Canvas.ToPdf(available.Width, Math.Min(plan.Height, available.Height));
-            context.PageLinks.Add(new LinkArea(left, bottom, right, top, _uri, _section));
+            context.PageLinks.Add(new LinkArea(left, bottom, right, top, _uri, _section) { Structure = context.CurrentStructure });
         }
 
         Child.Draw(available, context);
