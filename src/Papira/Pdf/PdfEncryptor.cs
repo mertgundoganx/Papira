@@ -39,10 +39,11 @@ internal sealed class PdfEncryptor
         block[11] = (byte)'b';
         RandomNumberGenerator.Fill(block.AsSpan(12));
 
+        // The specification asks for this one block to be encrypted on its own, with no chaining and no
+        // padding (ISO 32000-2, 7.6.4.4.3). It is a single block of mostly random bytes that a reader
+        // decrypts to check the permissions against, so it carries nothing that could repeat.
         using var aes = Aes.Create();
         aes.Key = _fileKey;
-        aes.Mode = CipherMode.ECB;
-        aes.Padding = PaddingMode.None;
         Perms = aes.EncryptEcb(block, PaddingMode.None);
     }
 
