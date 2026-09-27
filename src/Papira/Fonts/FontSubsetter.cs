@@ -11,8 +11,15 @@ internal static class FontSubsetter
 {
     private static readonly string[] CopiedTables = ["cvt ", "fpgm", "prep", "OS/2"];
 
-    public static byte[] Subset(TrueTypeFont font, IReadOnlyCollection<ushort> usedGlyphs)
+    /// <summary>
+    /// The font program to embed, holding only the glyphs the document uses. For a font with Compact Font
+    /// Format outlines the result is a bare CFF font, which is what a PDF embeds for those.
+    /// </summary>
+    public static byte[] Subset(TrueTypeFont font, IReadOnlyList<ushort> usedGlyphs, string name)
     {
+        if (font.IsCff)
+            return CffSubsetter.Subset(font, usedGlyphs, name);
+
         var data = font.Data;
         var glyphCount = font.GlyphCount;
         font.TryTable("loca", out var loca, out _);

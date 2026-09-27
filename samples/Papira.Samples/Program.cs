@@ -22,6 +22,34 @@ if (mode is "all" or "features")
     Console.WriteLine($"Features written: {path}");
 }
 
+if (mode is "all" or "archive")
+{
+    var path = Path.Combine(outputDir, "archive.pdf");
+    ArchiveDocument.Create().GeneratePdf(path);
+    Console.WriteLine($"Archivable invoice written: {path}");
+}
+
+if (mode is "all" or "accessible")
+{
+    var path = Path.Combine(outputDir, "accessible.pdf");
+    AccessibleDocument.Create().GeneratePdf(path);
+    Console.WriteLine($"Accessible report written: {path}");
+}
+
+if (mode is "all" or "form")
+{
+    var path = Path.Combine(outputDir, "form.pdf");
+    FormDocument.Create().GeneratePdf(path);
+    Console.WriteLine($"Fillable form written: {path}");
+}
+
+if (mode is "all" or "html")
+{
+    var path = Path.Combine(outputDir, "html.pdf");
+    HtmlDocument.Create().GeneratePdf(path);
+    Console.WriteLine($"HTML report written: {path}");
+}
+
 if (mode is "all" or "bench")
 {
     var count = args.Length > 1 ? int.Parse(args[1], CultureInfo.InvariantCulture) : 2000;

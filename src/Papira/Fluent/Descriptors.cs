@@ -138,19 +138,21 @@ public sealed class ListDescriptor
 
         for (var i = 0; i < _items.Count; i++)
         {
-            var marker = new TextElement { Alignment = TextAlignment.Right };
+            var marker = new TextElement { Alignment = TextAlignment.Right, Role = "Lbl" };
             marker.Spans.Add(new TextSpan { Text = _marker(_start + i) });
 
             var markerItem = new RowItem(RowItemKind.Constant, markerWidth) { Child = marker };
-            var contentItem = new RowItem(RowItemKind.Relative, 1) { Child = _items[i] };
+            var contentItem = new RowItem(RowItemKind.Relative, 1) { Child = new TaggedElement("LBody") { Child = _items[i] } };
 
             var row = new RowElement { Spacing = 6 };
             row.Items.Add(markerItem);
             row.Items.Add(contentItem);
-            column.Items.Add(row);
+
+            // Every item of a tagged list is an element of its own, holding its marker and its text.
+            column.Items.Add(new TaggedElement("LI") { Child = row });
         }
 
-        return column;
+        return new ColumnElement { Spacing = _spacing, Items = { new TaggedElement("L") { Child = column } } };
     }
 }
 
@@ -236,6 +238,29 @@ public sealed class TextDescriptor
     public TextDescriptor AlignRight() => SetAlignment(TextAlignment.Right);
     public TextDescriptor Justify() => SetAlignment(TextAlignment.Justify);
 
+    /// <summary>
+    /// Marks the text as a heading of the given level, from 1 to 6. In a tagged document the headings
+    /// are what a reader for the blind navigates by.
+    /// </summary>
+    public TextDescriptor Heading(int level)
+    {
+        _element.Role = "H" + Math.Clamp(level, 1, 6).ToString(CultureInfo.InvariantCulture);
+        return this;
+    }
+
+    /// <summary>
+    /// The direction the paragraph reads in. The default takes it from the first strongly directional
+    /// character, so Arabic and Hebrew text is laid out right to left without any setting.
+    /// </summary>
+    public TextDescriptor Direction(TextDirection direction)
+    {
+        _element.Direction = direction;
+        return this;
+    }
+
+    /// <summary>Lays the paragraph out right to left, whatever it starts with.</summary>
+    public TextDescriptor RightToLeft() => Direction(TextDirection.RightToLeft);
+
     private TextDescriptor SetAlignment(TextAlignment alignment)
     {
         _element.Alignment = alignment;
@@ -286,10 +311,48 @@ public sealed class TextSpanDescriptor
     public TextSpanDescriptor LineHeight(float factor) => Update(s => s.LineHeight(factor));
     public TextSpanDescriptor LetterSpacing(float points) => Update(s => s.LetterSpacing(points));
 
+    /// <summary>
+    /// Makes this piece of the paragraph open an address when it is clicked. Use
+    /// <see cref="ContainerExtensions.Hyperlink"/> to make a whole block clickable instead.
+    /// </summary>
+    public TextSpanDescriptor Hyperlink(string uri)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(uri);
+        _span.Uri = uri;
+        _span.Section = null;
+        return this;
+    }
+
+    /// <summary>Makes this piece of the paragraph jump to a named section of the document.</summary>
+    public TextSpanDescriptor SectionLink(string section)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(section);
+        _span.Section = section;
+        _span.Uri = null;
+        return this;
+    }
+
     public TextSpanDescriptor AlignLeft() => SetAlignment(TextAlignment.Left);
     public TextSpanDescriptor AlignCenter() => SetAlignment(TextAlignment.Center);
     public TextSpanDescriptor AlignRight() => SetAlignment(TextAlignment.Right);
     public TextSpanDescriptor Justify() => SetAlignment(TextAlignment.Justify);
+
+    /// <summary>Marks the text as a heading of the given level; see <see cref="TextDescriptor.Heading"/>.</summary>
+    public TextSpanDescriptor Heading(int level)
+    {
+        _element.Role = "H" + Math.Clamp(level, 1, 6).ToString(CultureInfo.InvariantCulture);
+        return this;
+    }
+
+    /// <summary>The direction of the whole paragraph; see <see cref="TextDescriptor.Direction"/>.</summary>
+    public TextSpanDescriptor Direction(TextDirection direction)
+    {
+        _element.Direction = direction;
+        return this;
+    }
+
+    /// <summary>Lays the paragraph out right to left, whatever it starts with.</summary>
+    public TextSpanDescriptor RightToLeft() => Direction(TextDirection.RightToLeft);
 
     private TextSpanDescriptor SetAlignment(TextAlignment alignment)
     {
@@ -313,7 +376,47 @@ public sealed class ImageDescriptor
     /// <summary>Scales to fit entirely in the available area, keeping the aspect ratio.</summary>
     public ImageDescriptor FitArea() => Set(ImageScaling.FitArea);
 
+    /// <summary>
+    /// What a reader for the blind announces in place of the picture. Every picture of a tagged document
+    /// needs one, unless it is decoration that says nothing.
+    /// </summary>
+    public ImageDescriptor Alt(string text)
+    {
+        _element.Alt = text;
+        return this;
+    }
+
     private ImageDescriptor Set(ImageScaling scaling)
+    {
+        _element.Scaling = scaling;
+        return this;
+    }
+}
+
+/// <summary>Chooses how a vector drawing is scaled into the space it is given.</summary>
+public sealed class SvgDescriptor
+{
+    private readonly SvgElement _element;
+
+    internal SvgDescriptor(SvgElement element) => _element = element;
+
+    /// <summary>Scales to the available width (default).</summary>
+    public SvgDescriptor FitWidth() => Set(ImageScaling.FitWidth);
+
+    /// <summary>Scales to the available height.</summary>
+    public SvgDescriptor FitHeight() => Set(ImageScaling.FitHeight);
+
+    /// <summary>Scales to fit entirely in the available area, keeping the aspect ratio.</summary>
+    public SvgDescriptor FitArea() => Set(ImageScaling.FitArea);
+
+    /// <summary>What a reader for the blind announces in place of the drawing.</summary>
+    public SvgDescriptor Alt(string text)
+    {
+        _element.Alt = text;
+        return this;
+    }
+
+    private SvgDescriptor Set(ImageScaling scaling)
     {
         _element.Scaling = scaling;
         return this;
@@ -329,6 +432,129 @@ public sealed class LineDescriptor
     public LineDescriptor LineColor(Color color)
     {
         _element.Color = color;
+        return this;
+    }
+}
+
+/// <summary>What every field of a form has in common: whether it can be filled in, and how it looks.</summary>
+/// <typeparam name="T">The descriptor itself, so that the calls of a derived type can be chained.</typeparam>
+public abstract class FormFieldDescriptor<T>
+    where T : FormFieldDescriptor<T>
+{
+    internal FormFieldDescriptor(FormField field) => Field = field;
+
+    internal FormField Field { get; }
+
+    /// <summary>
+    /// What the field is for, in words. Shown as a tooltip, announced by a reader for the blind, and
+    /// required of a field in a document that has to be accessible. Defaults to the name of the field.
+    /// </summary>
+    public T Tooltip(string text)
+    {
+        Field.Tooltip = text;
+        return (T)this;
+    }
+
+    /// <summary>Marks the field as one that has to be filled in before the form is sent.</summary>
+    public T Required(bool required = true)
+    {
+        Field.Required = required;
+        return (T)this;
+    }
+
+    /// <summary>Shows the value without letting a reader change it.</summary>
+    public T ReadOnly(bool readOnly = true)
+    {
+        Field.ReadOnly = readOnly;
+        return (T)this;
+    }
+
+    /// <summary>The colour behind the field; by default the page shows through.</summary>
+    public T BackgroundColor(Color color)
+    {
+        Field.BackgroundColor = color;
+        return (T)this;
+    }
+
+    /// <summary>The colour of the frame around the field.</summary>
+    public T BorderColor(Color color)
+    {
+        Field.BorderColor = color;
+        return (T)this;
+    }
+
+    /// <summary>The height of the box, in points, instead of the one its text style implies.</summary>
+    public T Height(float height)
+    {
+        if (height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(height), "The height of a form field must be positive.");
+
+        Field.RequestedHeight = height;
+        return (T)this;
+    }
+}
+
+/// <summary>A field a reader types into.</summary>
+public sealed class TextFieldDescriptor : FormFieldDescriptor<TextFieldDescriptor>
+{
+    internal TextFieldDescriptor(FormField field) : base(field)
+    {
+    }
+
+    /// <summary>The text the field starts out with.</summary>
+    public TextFieldDescriptor Value(string text)
+    {
+        Field.Value = text;
+        return this;
+    }
+
+    /// <summary>Lets the field hold several lines; it is three lines tall unless a height is given.</summary>
+    public TextFieldDescriptor Multiline(bool multiline = true)
+    {
+        Field.Multiline = multiline;
+        return this;
+    }
+
+    /// <summary>The largest number of characters the field accepts.</summary>
+    public TextFieldDescriptor MaxLength(int characters)
+    {
+        if (characters <= 0)
+            throw new ArgumentOutOfRangeException(nameof(characters), "The length limit of a text field must be positive.");
+
+        Field.MaxLength = characters;
+        return this;
+    }
+}
+
+/// <summary>A box a reader ticks.</summary>
+public sealed class CheckboxDescriptor : FormFieldDescriptor<CheckboxDescriptor>
+{
+    internal CheckboxDescriptor(FormField field) : base(field)
+    {
+    }
+
+    /// <summary>Starts out ticked.</summary>
+    public CheckboxDescriptor Checked(bool ticked = true)
+    {
+        Field.Checked = ticked;
+        return this;
+    }
+}
+
+/// <summary>A list a reader picks one entry from.</summary>
+public sealed class DropdownDescriptor : FormFieldDescriptor<DropdownDescriptor>
+{
+    internal DropdownDescriptor(FormField field) : base(field)
+    {
+    }
+
+    /// <summary>The entry the field starts out with; it has to be one of the options.</summary>
+    public DropdownDescriptor Value(string option)
+    {
+        if (!Field.Options.Contains(option, StringComparer.Ordinal))
+            throw new ArgumentException($"'{option}' is not one of the options of the dropdown '{Field.Name}'.", nameof(option));
+
+        Field.Value = option;
         return this;
     }
 }

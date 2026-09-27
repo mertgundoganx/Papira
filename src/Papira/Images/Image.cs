@@ -4,8 +4,8 @@ using Papira.Images;
 namespace Papira;
 
 /// <summary>
-/// A JPEG or PNG image. Create once and reuse: the PDF-ready encoding is computed lazily a single time
-/// and shared by every document that uses this instance (thread-safe).
+/// A JPEG, PNG or WebP image. Create once and reuse: the PDF-ready encoding is computed lazily a single
+/// time and shared by every document that uses this instance (thread-safe).
 /// </summary>
 public sealed class Image
 {
@@ -25,9 +25,15 @@ public sealed class Image
             (Width, Height) = (png.Width, png.Height);
             _encoded = new Lazy<EncodedImage>(() => PngDecoder.Encode(png, CompressionLevel.Optimal));
         }
+        else if (WebpDecoder.IsWebp(data))
+        {
+            var webp = WebpDecoder.ReadInfo(data);
+            (Width, Height) = (webp.Width, webp.Height);
+            _encoded = new Lazy<EncodedImage>(() => WebpDecoder.Encode(webp, CompressionLevel.Optimal));
+        }
         else
         {
-            throw new NotSupportedException("Unsupported image format. Papira supports JPEG and PNG.");
+            throw new NotSupportedException("Unsupported image format. Papira supports JPEG, PNG and WebP.");
         }
     }
 
@@ -41,8 +47,8 @@ public sealed class Image
 
     internal EncodedImage Encoded => _encoded.Value;
 
-    /// <summary>Creates an image from JPEG or PNG data. The data is copied.</summary>
-    /// <exception cref="NotSupportedException">The data is neither JPEG nor PNG, or uses an unsupported variant.</exception>
+    /// <summary>Creates an image from JPEG, PNG or WebP data. The data is copied.</summary>
+    /// <exception cref="NotSupportedException">The format or a variant of it is not supported.</exception>
     /// <exception cref="InvalidDataException">The data is malformed.</exception>
     public static Image FromBytes(byte[] data)
     {

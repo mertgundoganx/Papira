@@ -41,7 +41,7 @@ public class EngineTests
     {
         var font = Lato;
         var used = "Papira ğü".Select(c => font.GetGlyph(c)).ToArray();
-        var subset = FontSubsetter.Subset(font, used);
+        var subset = FontSubsetter.Subset(font, used, "ABCDEF+Lato");
 
         Assert.True(subset.Length < font.Data.Length / 4, "subset should be much smaller than the font");
 
@@ -73,7 +73,7 @@ public class EngineTests
         element.Spans.Add(new TextSpan { Text = "line1\nline2\nline3\nline4" });
         var context = NewContext();
         using var buffer = new ByteBuffer();
-        context.Canvas.BeginPage(buffer, 800);
+        context.Canvas.BeginPage(buffer, 600, 800);
 
         var full = element.Measure(new Size(500, 1000), context);
         var lineHeight = full.Height / 4;

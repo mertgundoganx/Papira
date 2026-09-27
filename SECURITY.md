@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-Papira is in early development (0.x). Security fixes are released only for the latest published version.
+Security fixes are released only for the latest published version.
 
 | Version | Supported |
 |---------|-----------|
-| 0.2.x   | Yes       |
-| < 0.2   | No        |
+| 1.0.x   | Yes       |
+| < 1.0   | No        |
 
 ## Reporting a vulnerability
 
@@ -27,7 +27,8 @@ You can expect an acknowledgement within 7 days. Once the issue is confirmed, a 
 
 Papira runs inside your process and parses the fonts and images you give it. Areas where security matters most:
 
-- **Parsing untrusted input.** The TrueType parser and the PNG/JPEG decoders process binary data that may come from users. Malformed input should fail with an exception (`InvalidDataException`, `NotSupportedException`). Crashes, hangs, unbounded memory use or out-of-bounds access caused by crafted input are all in scope.
+- **Parsing untrusted input.** The TrueType parser and the PNG/JPEG decoders process binary data that may come from users.
+- **Encryption.** Papira encrypts with AES-256 (revision 6). Weaknesses in key derivation, permission handling or the use of randomness are in scope. Malformed input should fail with an exception (`InvalidDataException`, `NotSupportedException`). Crashes, hangs, unbounded memory use or out-of-bounds access caused by crafted input are all in scope.
 - **Resource exhaustion.** Layouts that make the engine loop without progress should hit `DocumentSettings.MaxPages` or throw `DocumentLayoutException`.
 
 Out of scope:
