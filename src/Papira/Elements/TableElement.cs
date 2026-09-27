@@ -223,12 +223,16 @@ internal sealed class TableElement : Element
         return heights;
     }
 
-    private void DrawGroup(RowGroup group, float height, LayoutContext context)
+    private void DrawGroup(RowGroup group, float height, LayoutContext context, bool header)
     {
+        // A row of a tagged table is a structure element of its own, holding its cells.
+        using var tag = context.Tag("TR", content: false);
+
         if (group.RowCount == 1)
         {
             foreach (var cell in group.Cells)
-                DrawCell(cell, 0, height, context);
+                DrawCell(cell, 0, height, context, header);
+
             return;
         }
 
@@ -240,12 +244,19 @@ internal sealed class TableElement : Element
         foreach (var cell in group.Cells)
         {
             var last = Math.Min(cell.Row + cell.RowSpan, group.RowCount);
-            DrawCell(cell, rowY[cell.Row], rowY[last] - rowY[cell.Row], context);
+            DrawCell(cell, rowY[cell.Row], rowY[last] - rowY[cell.Row], context, header);
         }
     }
 
-    private void DrawCell(in PlacedCell cell, float y, float height, LayoutContext context)
+    private void DrawCell(in PlacedCell cell, float y, float height, LayoutContext context, bool header)
     {
+        using var tag = context.Tag(header ? "TH" : "TD", content: false);
+        if (context.CurrentStructure is { } structure)
+        {
+            structure.ColumnSpan = cell.ColumnSpan;
+            structure.RowSpan = cell.RowSpan;
+        }
+
         var size = new Size(CellWidth(cell), height);
         var finished = !cell.Cell.Measure(size, context).HasContent;
 
@@ -341,6 +352,7 @@ internal sealed class TableElement : Element
     {
         EnsureStructure(available.Width);
         var canvas = context.Canvas;
+        using var tag = context.Tag("Table", content: false);
 
         if (_groups!.Count == 0)
         {
@@ -362,7 +374,7 @@ internal sealed class TableElement : Element
                 continue;
 
             canvas.Translate(0, y);
-            DrawGroup(group, plan.Height, context);
+            DrawGroup(group, plan.Height, context, header: true);
             canvas.Translate(0, -y);
             y += plan.Height;
         }
@@ -381,7 +393,7 @@ internal sealed class TableElement : Element
                 return;
 
             canvas.Translate(0, y);
-            DrawGroup(group, plan.Height, context);
+            DrawGroup(group, plan.Height, context, header: false);
             canvas.Translate(0, -y);
             y += plan.Height;
 

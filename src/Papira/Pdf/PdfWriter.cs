@@ -19,11 +19,16 @@ internal sealed class PdfWriter : IDisposable
     private readonly List<long> _offsets = [0];
     private long _flushed;
 
-    public PdfWriter(Stream output)
+    private readonly PdfEncryptor? _encryptor;
+    private int _currentObject;
+
+    public PdfWriter(Stream output, PdfEncryptor? encryptor = null)
     {
         _output = output;
-        // %âãÏÓ marker tells transfer tools the file is binary.
-        _buffer.Ascii("%PDF-1.7\n%").Bytes([0xE2, 0xE3, 0xCF, 0xD3]).NewLine();
+        _encryptor = encryptor;
+
+        // AES-256 encryption is a PDF 2.0 feature; plain files stay at 1.7.
+        _buffer.Ascii(encryptor == null ? "%PDF-1.7\n%" : "%PDF-2.0\n%").Bytes([0xE2, 0xE3, 0xCF, 0xD3]).NewLine();
     }
 
     private long Position => _flushed + _buffer.Length;
@@ -39,6 +44,7 @@ internal sealed class PdfWriter : IDisposable
 
     public void BeginObject(int id)
     {
+        _currentObject = id;
         _offsets[id] = Position;
         _buffer.Int(id).Ascii(" 0 obj\n");
     }
@@ -50,9 +56,49 @@ internal sealed class PdfWriter : IDisposable
             Flush();
     }
 
+    /// <summary>Writes a text string, encrypted when the document is protected.</summary>
+    public void TextString(string value)
+    {
+        if (_encryptor == null)
+        {
+            _buffer.TextString(value);
+            return;
+        }
+
+        var bytes = System.Text.Encoding.BigEndianUnicode.GetBytes(value);
+        WriteHexString(_encryptor.EncryptData([0xFE, 0xFF, .. bytes]));
+    }
+
+    /// <summary>Writes a byte string such as a URI or a date, encrypted when the document is protected.</summary>
+    public void AsciiString(string value)
+    {
+        if (_encryptor == null)
+        {
+            _buffer.AsciiString(value);
+            return;
+        }
+
+        WriteHexString(_encryptor.EncryptData(System.Text.Encoding.UTF8.GetBytes(value)));
+    }
+
+    private void WriteHexString(ReadOnlySpan<byte> data)
+    {
+        _buffer.Byte((byte)'<');
+        foreach (var b in data)
+            _buffer.Hex8(b);
+        _buffer.Byte((byte)'>');
+    }
+
     /// <summary>Writes a complete stream object. <paramref name="dictionaryEntries"/> must not contain /Length.</summary>
     public void WriteStream(int id, ReadOnlySpan<byte> data, Action<ByteBuffer>? dictionaryEntries, bool flateEncoded)
     {
+        byte[]? encrypted = null;
+        if (_encryptor != null)
+        {
+            encrypted = _encryptor.EncryptData(data);
+            data = encrypted;
+        }
+
         BeginObject(id);
         _buffer.Ascii("<</Length ").Int(data.Length);
         if (flateEncoded)
@@ -76,7 +122,7 @@ internal sealed class PdfWriter : IDisposable
         EndObject();
     }
 
-    public void WriteTrailer(int catalogId, int infoId)
+    public void WriteTrailer(int catalogId, int infoId, int encryptId = 0)
     {
         for (var i = 1; i < _offsets.Count; i++)
         {
@@ -111,8 +157,12 @@ internal sealed class PdfWriter : IDisposable
 
         _buffer.Ascii("trailer\n<</Size ").Int(_offsets.Count)
             .Ascii("/Root ").Int(catalogId).Ascii(" 0 R")
-            .Ascii("/Info ").Int(infoId).Ascii(" 0 R")
-            .Ascii("/ID[<");
+            .Ascii("/Info ").Int(infoId).Ascii(" 0 R");
+
+        if (encryptId != 0)
+            _buffer.Ascii("/Encrypt ").Int(encryptId).Ascii(" 0 R");
+
+        _buffer.Ascii("/ID[<");
         foreach (var b in fileId) _buffer.Hex8(b);
         _buffer.Ascii("><");
         foreach (var b in fileId) _buffer.Hex8(b);

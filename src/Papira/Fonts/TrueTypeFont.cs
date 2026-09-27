@@ -4,7 +4,7 @@ using System.Text;
 namespace Papira.Fonts;
 
 /// <summary>Style metadata of a font face, cheap to read without parsing glyph data.</summary>
-internal sealed record FontFaceInfo(string Family, int Weight, bool Italic, bool HasTrueTypeOutlines);
+internal sealed record FontFaceInfo(string Family, int Weight, bool Italic, bool HasOutlines);
 
 /// <summary>
 /// Parsed TrueType font face (also a single face of a .ttc collection).
@@ -21,6 +21,8 @@ internal sealed class TrueTypeFont
     private readonly ushort[] _bmpGlyphs;
     private readonly Dictionary<int, ushort>? _supplementaryGlyphs;
     private readonly Lazy<KerningTable> _kerning;
+    private readonly Lazy<GlyphSubstitution> _substitution;
+    private readonly Lazy<ColorGlyphs> _colors;
 
     public byte[] Data { get; }
     public FontFaceInfo Info { get; }
@@ -28,6 +30,9 @@ internal sealed class TrueTypeFont
     public int UnitsPerEm { get; }
     public int GlyphCount { get; }
     public bool LongLocaFormat { get; }
+
+    /// <summary>True when the outlines are Compact Font Format charstrings rather than TrueType glyphs.</summary>
+    public bool IsCff { get; }
 
     public short Ascender { get; }
     public short Descender { get; }
@@ -62,10 +67,16 @@ internal sealed class TrueTypeFont
 
         GlyphCount = U16(data, Table("maxp", minLength: 6) + 4);
 
-        if (!TryTable("glyf", out _, out _) || !TryTable("loca", out _, out var locaLength))
-            throw new NotSupportedException("The font has no TrueType outlines (glyf/loca tables); bitmap-only and CFF fonts are not supported.");
-        if (locaLength < (GlyphCount + 1L) * (LongLocaFormat ? 4 : 2))
-            throw new InvalidDataException("Invalid font: the 'loca' table is too short.");
+        // Outlines come either as TrueType glyphs or as Compact Font Format charstrings (.otf).
+        IsCff = TryTable("CFF ", out _, out _);
+        if (!IsCff)
+        {
+            if (!TryTable("glyf", out _, out _) || !TryTable("loca", out _, out var locaLength))
+                throw new NotSupportedException("The font has no outlines: it has neither glyf/loca nor a CFF table.");
+
+            if (locaLength < (GlyphCount + 1L) * (LongLocaFormat ? 4 : 2))
+                throw new InvalidDataException("Invalid font: the 'loca' table is too short.");
+        }
 
         var hhea = Table("hhea", minLength: 36);
         Ascender = I16(data, hhea + 4);
@@ -112,6 +123,7 @@ internal sealed class TrueTypeFont
 
         var names = ReadNames(data, _tables);
         Info = new FontFaceInfo(names.Family, weight, italic, true);
+
         PostScriptName = SanitizePostScriptName(names.PostScript ?? names.Family + "-" + names.Subfamily);
 
         TryTable("hmtx", out var hmtx, out var hmtxLength);
@@ -119,10 +131,18 @@ internal sealed class TrueTypeFont
         TryTable("cmap", out var cmap, out var cmapLength);
         (_bmpGlyphs, _supplementaryGlyphs) = ReadCharacterMap(data, cmap, cmapLength);
         _kerning = new Lazy<KerningTable>(() => KerningTable.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
+        _substitution = new Lazy<GlyphSubstitution>(() => GlyphSubstitution.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
+        _colors = new Lazy<ColorGlyphs>(() => ColorGlyphs.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     /// <summary>Pair kerning, loaded on first use.</summary>
     public KerningTable Kerning => _kerning.Value;
+
+    /// <summary>The glyph substitutions a script needs (cursive forms, ligatures), loaded on first use.</summary>
+    public GlyphSubstitution Substitution => _substitution.Value;
+
+    /// <summary>The coloured versions of glyphs, for emoji fonts; loaded on first use.</summary>
+    public ColorGlyphs Colors => _colors.Value;
 
     /// <summary>Loads every face in a font file (.ttf, or all faces of a .ttc collection).</summary>
     public static IReadOnlyList<TrueTypeFont> LoadAll(byte[] data)
@@ -131,9 +151,6 @@ internal sealed class TrueTypeFont
         var result = new List<TrueTypeFont>(offsets.Length);
         foreach (var offset in offsets)
         {
-            if (U32(data, offset) == TagOtto)
-                continue; // CFF outlines are not supported for embedding.
-
             try
             {
                 result.Add(Create(data, offset));
@@ -152,9 +169,6 @@ internal sealed class TrueTypeFont
         var offsets = GetFaceOffsets(data);
         if ((uint)faceIndex >= (uint)offsets.Length)
             throw new ArgumentOutOfRangeException(nameof(faceIndex), $"Font file has {offsets.Length} face(s).");
-
-        if (U32(data, offsets[faceIndex]) == TagOtto)
-            throw new NotSupportedException("OpenType fonts with CFF outlines (.otf) are not supported yet. Use a TrueType-flavored font (.ttf).");
 
         return Create(data, offsets[faceIndex]);
     }
@@ -238,7 +252,8 @@ internal sealed class TrueTypeFont
                 italic |= head.Length >= 46 && (U16(head, 44) & 2) != 0;
             }
 
-            var hasOutlines = !isCff && tables.ContainsKey(Tag("glyf")) && tables.ContainsKey(Tag("loca"));
+            var hasOutlines = tables.ContainsKey(Tag("CFF ")) || (tables.ContainsKey(Tag("glyf")) && tables.ContainsKey(Tag("loca")));
+            _ = isCff;
             result.Add(new FontFaceInfo(names.Family, weight, italic, hasOutlines));
         }
 

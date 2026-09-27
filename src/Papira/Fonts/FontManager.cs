@@ -65,7 +65,7 @@ public static class FontManager
 
     /// <summary>Registers every face of a .ttf/.ttc file.</summary>
     /// <exception cref="InvalidDataException">The file is not a valid font.</exception>
-    /// <exception cref="NotSupportedException">The font has no TrueType outlines (e.g. CFF-based .otf).</exception>
+    /// <exception cref="NotSupportedException">The font has no outlines Papira can draw.</exception>
     public static void RegisterFont(string path) => RegisterCore(File.ReadAllBytes(path), null);
 
     /// <summary>Registers every face of a .ttf/.ttc font read from <paramref name="stream"/>.</summary>
@@ -118,7 +118,7 @@ public static class FontManager
 
         var faces = TrueTypeFont.LoadAll(data);
         if (faces.Count == 0)
-            throw new NotSupportedException("The font file contains no TrueType-outline faces. CFF-based .otf fonts are not supported yet.");
+            throw new NotSupportedException("The font file contains no faces with outlines Papira can draw.");
 
         lock (RegistrationLock)
         {
@@ -238,7 +238,7 @@ public static class FontManager
     private static bool TryPick(FontSource[] candidates, int weight, bool italic, out ResolvedFont resolved)
     {
         var ordered = candidates
-            .Where(c => c.Info.HasTrueTypeOutlines)
+            .Where(c => c.Info.HasOutlines)
             .OrderBy(c => c.Info.Italic == italic ? 0 : 1)
             .ThenBy(c => Math.Abs(c.Info.Weight - weight))
             .ThenBy(c => weight > 400 ? -c.Info.Weight : c.Info.Weight);
@@ -301,7 +301,7 @@ public static class FontManager
                 for (var faceIndex = 0; faceIndex < infos.Count; faceIndex++)
                 {
                     var info = infos[faceIndex];
-                    if (!info.HasTrueTypeOutlines)
+                    if (!info.HasOutlines)
                         continue;
 
                     var index = faceIndex;

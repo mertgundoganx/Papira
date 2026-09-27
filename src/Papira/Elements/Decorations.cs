@@ -30,7 +30,7 @@ internal sealed class BackgroundElement(Color color) : ContainerElement
     internal override void Draw(Size available, LayoutContext context)
     {
         if (context.DrawEmptyDecorations || Child.Measure(available, context).HasContent)
-            context.Canvas.FillRectangle(0, 0, available.Width, available.Height, color);
+            context.Canvas.FillRoundedRectangle(0, 0, available.Width, available.Height, context.CornerRadius, color);
         Child.Draw(available, context);
     }
 }
@@ -47,9 +47,17 @@ internal sealed class BorderElement : ContainerElement
         if (!hasContent)
             return;
 
-        // Borders are drawn as filled rectangles centred on the edges: crisp and joined at the corners.
         var canvas = context.Canvas;
         var (w, h) = (available.Width, available.Height);
+
+        // Rounded corners need a stroked path, which requires the same width on all sides.
+        if (context.CornerRadius > 0 && Left > 0 && Left == Top && Top == Right && Right == Bottom)
+        {
+            canvas.StrokeRoundedRectangle(Left / 2, Left / 2, w - Left, h - Left, context.CornerRadius, Color, Left);
+            return;
+        }
+
+        // Borders are drawn as filled rectangles centred on the edges: crisp and joined at the corners.
         canvas.FillRectangle(-Left / 2, -Top / 2, w + Left / 2 + Right / 2, Top, Color);
         canvas.FillRectangle(-Left / 2, h - Bottom / 2, w + Left / 2 + Right / 2, Bottom, Color);
         canvas.FillRectangle(-Left / 2, -Top / 2, Left, h + Top / 2 + Bottom / 2, Color);
@@ -292,59 +300,23 @@ internal sealed class LineElement(bool vertical, float thickness) : Element
     internal override void Reset() => _drawn = false;
 }
 
-internal enum ImageScaling : byte { FitWidth, FitHeight, FitArea }
-
-internal sealed class ImageElement(Image image) : Element
+internal sealed class ImageElement(Image image) : FittedElement
 {
-    private const float MinimumSize = 1;
-    private const float MinimumShrunkHeight = 24;
+    protected override float AspectRatio => image.AspectRatio;
 
-    public ImageScaling Scaling = ImageScaling.FitWidth;
-    private bool _drawn;
+    protected override void DrawContent(Size target, LayoutContext context) =>
+        context.Canvas.DrawImage(image, 0, 0, target.Width, target.Height);
+}
 
-    private Size Target(Size available)
-    {
-        var ratio = image.AspectRatio;
-        return Scaling switch
-        {
-            ImageScaling.FitWidth => new Size(available.Width, available.Width * ratio),
-            ImageScaling.FitHeight => new Size(available.Height / ratio, available.Height),
-            _ => available.Width * ratio <= available.Height
-                ? new Size(available.Width, available.Width * ratio)
-                : new Size(available.Height / ratio, available.Height),
-        };
-    }
-
-    internal override SpacePlan Measure(Size available, LayoutContext context)
-    {
-        if (_drawn)
-            return SpacePlan.Empty;
-
-        var target = Target(available);
-        if (target.Width > available.Width + Size.Epsilon || target.Height > available.Height + Size.Epsilon)
-            return SpacePlan.Wrap;
-
-        if (target.Width < MinimumSize || target.Height < MinimumSize)
-            return SpacePlan.Wrap;
-
-        // FitHeight/FitArea shrink to the remaining space. When only a sliver is left, continue on the next page
-        // instead of drawing a tiny thumbnail.
-        var fullWidthHeight = available.Width * image.AspectRatio;
-        if (target.Height < Math.Min(MinimumShrunkHeight, fullWidthHeight) - Size.Epsilon)
-            return SpacePlan.Wrap;
-
-        return SpacePlan.Full(target.Width, target.Height);
-    }
-
+/// <summary>
+/// Gives its content a place in the structure of a tagged document — a list, an item of one — without
+/// drawing anything itself.
+/// </summary>
+internal sealed class TaggedElement(string role) : ContainerElement
+{
     internal override void Draw(Size available, LayoutContext context)
     {
-        if (_drawn)
-            return;
-
-        _drawn = true;
-        var target = Target(available);
-        context.Canvas.DrawImage(image, 0, 0, target.Width, target.Height);
+        using var tag = context.Tag(role, content: false);
+        Child.Draw(available, context);
     }
-
-    internal override void Reset() => _drawn = false;
 }
