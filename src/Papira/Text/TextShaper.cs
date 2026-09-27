@@ -1,3 +1,4 @@
+using System.Text;
 using Papira.Fonts;
 using static Papira.Fonts.TrueTypeFont;
 
@@ -28,6 +29,9 @@ internal static class TextShaper
         >= 0x0780 and <= 0x07BF => Thaana,
         >= 0x07C0 and <= 0x07FF => Nko,
         >= 0x0860 and <= 0x08FF => Arabic,
+        >= 0x0900 and <= 0x0D7F => IndicShaper.ScriptOf(codepoint),
+        >= 0x1CD0 and <= 0x1CFF => IndicShaper.ScriptOf(codepoint),
+        >= 0xA8E0 and <= 0xA8FF => IndicShaper.ScriptOf(codepoint),
         >= 0xFB1D and <= 0xFB4F => Hebrew,
         >= 0xFB50 and <= 0xFDFF => Arabic,
         >= 0xFE70 and <= 0xFEFF => Arabic,
@@ -68,8 +72,17 @@ internal static class TextShaper
     /// Fills <paramref name="buffer"/> with the glyphs for <paramref name="text"/>. The characters that
     /// only control joining are used for the shaping and then dropped, as they have nothing to draw.
     /// </summary>
-    public static void Shape(TrueTypeFont font, ReadOnlySpan<int> text, uint script, bool rightToLeft, ShapingBuffer buffer)
+    public static void Shape(TrueTypeFont font, ReadOnlySpan<int> text, uint script, bool rightToLeft, ShapingBuffer buffer, bool ligatures = true)
     {
+        // The scripts of India are written in syllables, which are put in order before the font is
+        // asked to draw them; that is a shaper of its own.
+        if (IndicShaper.IsIndic(script))
+        {
+            IndicShaper.Shape(font, text, script, buffer);
+            Position(font, text, buffer, script, rightToLeft);
+            return;
+        }
+
         buffer.Clear();
 
         var cursive = IsCursive(script);
@@ -88,7 +101,36 @@ internal static class TextShaper
 
             // In right to left text a bracket is drawn as its mirror image.
             var character = rightToLeft ? Bidi.Mirror(codepoint) : codepoint;
+
+            // An accented letter is drawn as one glyph where the font has one, and as a letter with the
+            // accent attached to it where it does not. Which of the two a font offers differs, so both
+            // ways round are tried: a letter and its accent are put together, and one the font is
+            // missing is taken apart.
+            var merged = character;
+            var consumed = 0;
+            while (i + consumed + 1 < text.Length && IsCombining(text[i + consumed + 1]) &&
+                Compose(merged, text[i + consumed + 1]) is { } composed && font.GetGlyph(composed) != 0)
+            {
+                merged = composed;
+                consumed++;
+            }
+
+            if (consumed > 0)
+            {
+                buffer.Add(font.GetGlyph(merged), i, cursive ? forms[i] : JoiningForm.Isolated);
+                buffer[buffer.Length - 1].Length = (ushort)(consumed + 1);
+                i += consumed;
+                continue;
+            }
+
             var glyph = font.GetGlyph(character);
+            if (glyph == 0 && Decompose(character) is { } parts && HasAll(font, parts))
+            {
+                foreach (var part in parts)
+                    buffer.Add(font.GetGlyph(part), i, cursive ? forms[i] : JoiningForm.Isolated);
+
+                continue;
+            }
 
             // The joiners shape their neighbours and are never drawn. A font that has no glyph for one
             // is better off without it, so that the rules see the characters on either side as neighbours.
@@ -97,12 +139,110 @@ internal static class TextShaper
                 continue;
 
             buffer.Add(glyph, i, cursive ? forms[i] : JoiningForm.Isolated, invisible);
+            buffer[buffer.Length - 1].JoinerKind = codepoint switch
+            {
+                0x200D => JoinerKind.Joiner,
+                0x200C => JoinerKind.NonJoiner,
+                _ => JoinerKind.None,
+            };
         }
 
         var substitution = font.Substitution;
         if (!substitution.IsEmpty)
-            substitution.Apply(ScriptTag(script), cursive ? GlyphSubstitution.CursiveStages : GlyphSubstitution.SimpleStages, buffer);
+        {
+            var stages = (cursive, ligatures) switch
+            {
+                (true, true) => GlyphSubstitution.CursiveStages,
+                (true, false) => GlyphSubstitution.CursiveStagesWithoutLigatures,
+                (false, true) => GlyphSubstitution.SimpleStages,
+                _ => GlyphSubstitution.SimpleStagesWithoutLigatures,
+            };
+
+            substitution.Apply(ScriptTag(script), stages, buffer);
+        }
 
         buffer.RemoveInvisible();
+        Position(font, text, buffer, script, rightToLeft);
     }
+
+    /// <summary>
+    /// Puts the glyphs the font chose in their places: the marks on the letters they belong to, the
+    /// pairs kerned. What the font says about each glyph is only known once they have been chosen.
+    /// </summary>
+    private static void Position(TrueTypeFont font, ReadOnlySpan<int> text, ShapingBuffer buffer, uint script, bool rightToLeft)
+    {
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            ref var shaped = ref buffer[i];
+            shaped.BaseAdvance = (short)Math.Clamp(font.GetAdvance(shaped.Glyph), short.MinValue, short.MaxValue);
+            shaped.Mark = font.HasGlyphClasses
+                ? font.IsMark(shaped.Glyph)
+                : IsCombining(text[Math.Clamp(shaped.Cluster, 0, text.Length - 1)]);
+        }
+
+        var positioning = font.Positioning;
+        var tag = IndicShaper.IsIndic(script) ? IndicShaper.ScriptTag(font, script) : ScriptTag(script);
+        if (!positioning.IsEmpty)
+            positioning.Apply(tag, buffer, rightToLeft);
+
+        // A font with no positioning table of its own leaves its marks to Papira.
+        if (positioning.IsEmpty)
+            GlyphPositioning.PlaceMarksWithoutRules(buffer, font);
+    }
+
+    /// <summary>The single character a letter and the mark after it stand for, if there is one.</summary>
+    private static int? Compose(int first, int second)
+    {
+        if (second < 0x0300)
+            return null;
+
+        var pair = char.ConvertFromUtf32(first) + char.ConvertFromUtf32(second);
+        var composed = pair.Normalize(NormalizationForm.FormC);
+
+        // Only a canonical composition of the two into exactly one character counts.
+        if (composed.Length > 2 || (composed.Length == 2 && !char.IsSurrogatePair(composed[0], composed[1])))
+            return null;
+
+        var codepoint = char.ConvertToUtf32(composed, 0);
+        return codepoint == first ? null : codepoint;
+    }
+
+    /// <summary>The letter and the marks a character is made of, for a font that has no glyph for it.</summary>
+    private static int[]? Decompose(int codepoint)
+    {
+        if (codepoint < 0x00C0)
+            return null;
+
+        var text = char.ConvertFromUtf32(codepoint);
+        var decomposed = text.Normalize(NormalizationForm.FormD);
+        if (decomposed == text)
+            return null;
+
+        var parts = new List<int>(3);
+        foreach (var rune in decomposed.EnumerateRunes())
+            parts.Add(rune.Value);
+
+        return parts.Count > 1 ? [.. parts] : null;
+    }
+
+    private static bool HasAll(TrueTypeFont font, int[] codepoints)
+    {
+        foreach (var codepoint in codepoints)
+        {
+            if (font.GetGlyph(codepoint) == 0)
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// True for the characters that are drawn on the one before them. Fonts normally say which of their
+    /// glyphs are marks; this answers the same question for those that do not.
+    /// </summary>
+    public static bool IsCombining(int codepoint) =>
+        System.Globalization.CharUnicodeInfo.GetUnicodeCategory(codepoint) is
+            System.Globalization.UnicodeCategory.NonSpacingMark or
+            System.Globalization.UnicodeCategory.EnclosingMark or
+            System.Globalization.UnicodeCategory.SpacingCombiningMark;
 }

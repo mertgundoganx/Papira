@@ -22,6 +22,8 @@ internal sealed class TrueTypeFont
     private readonly Dictionary<int, ushort>? _supplementaryGlyphs;
     private readonly Lazy<KerningTable> _kerning;
     private readonly Lazy<GlyphSubstitution> _substitution;
+    private readonly Lazy<GlyphPositioning> _positioning;
+    private readonly Lazy<GlyphDefinitions> _definitions;
     private readonly Lazy<ColorGlyphs> _colors;
 
     public byte[] Data { get; }
@@ -132,6 +134,8 @@ internal sealed class TrueTypeFont
         (_bmpGlyphs, _supplementaryGlyphs) = ReadCharacterMap(data, cmap, cmapLength);
         _kerning = new Lazy<KerningTable>(() => KerningTable.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
         _substitution = new Lazy<GlyphSubstitution>(() => GlyphSubstitution.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
+        _positioning = new Lazy<GlyphPositioning>(() => GlyphPositioning.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
+        _definitions = new Lazy<GlyphDefinitions>(() => LayoutTable.ReadDefinitions(this), LazyThreadSafetyMode.ExecutionAndPublication);
         _colors = new Lazy<ColorGlyphs>(() => ColorGlyphs.Load(this), LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
@@ -140,6 +144,62 @@ internal sealed class TrueTypeFont
 
     /// <summary>The glyph substitutions a script needs (cursive forms, ligatures), loaded on first use.</summary>
     public GlyphSubstitution Substitution => _substitution.Value;
+
+    /// <summary>Where the glyphs of a run go: marks on their letters, joined letters, kerning.</summary>
+    public GlyphPositioning Positioning => _positioning.Value;
+
+    /// <summary>What GDEF says about the glyphs of the font: their class and the mark groups they are in.</summary>
+    internal GlyphDefinitions Definitions => _definitions.Value;
+
+    /// <summary>True when the font says the glyph is a mark, which is drawn on the letter before it.</summary>
+    internal bool IsMark(ushort glyph)
+    {
+        var kinds = Definitions.Kinds;
+        return glyph < kinds.Length && kinds[glyph] == GlyphKind.Mark;
+    }
+
+    /// <summary>True when the font says nothing about its glyphs, so their kind has to be guessed.</summary>
+    internal bool HasGlyphClasses => Definitions.Kinds.Length > 0;
+
+    /// <summary>
+    /// The box a glyph is drawn in, in font units. Only outlines have one written down; a glyph with
+    /// nothing to draw, and every glyph of a font with Compact Font Format outlines, has none here.
+    /// </summary>
+    internal bool TryGlyphBounds(ushort glyph, out short xMin, out short yMin, out short xMax, out short yMax)
+    {
+        xMin = yMin = xMax = yMax = 0;
+        if (IsCff || glyph >= GlyphCount || !TryTable("loca", out var loca, out var locaLength) || !TryTable("glyf", out var glyf, out var glyfLength))
+            return false;
+
+        long start, end;
+        if (LongLocaFormat)
+        {
+            if ((glyph + 2) * 4 > locaLength)
+                return false;
+
+            start = U32(Data, loca + (glyph * 4));
+            end = U32(Data, loca + ((glyph + 1) * 4));
+        }
+        else
+        {
+            if ((glyph + 2) * 2 > locaLength)
+                return false;
+
+            start = U16(Data, loca + (glyph * 2)) * 2L;
+            end = U16(Data, loca + ((glyph + 1) * 2)) * 2L;
+        }
+
+        // An empty glyph — a space — has no outline and so no box.
+        if (end <= start || end > glyfLength || end - start < 10)
+            return false;
+
+        var record = glyf + (int)start;
+        xMin = (short)U16(Data, record + 2);
+        yMin = (short)U16(Data, record + 4);
+        xMax = (short)U16(Data, record + 6);
+        yMax = (short)U16(Data, record + 8);
+        return xMax > xMin || yMax > yMin;
+    }
 
     /// <summary>The coloured versions of glyphs, for emoji fonts; loaded on first use.</summary>
     public ColorGlyphs Colors => _colors.Value;

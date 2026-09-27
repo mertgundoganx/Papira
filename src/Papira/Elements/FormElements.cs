@@ -4,7 +4,7 @@ using Papira.Rendering;
 namespace Papira.Elements;
 
 /// <summary>The kinds of field a reader can fill in.</summary>
-internal enum FormFieldKind : byte { Text, Checkbox, Choice }
+internal enum FormFieldKind : byte { Text, Checkbox, Choice, Radio, Signature }
 
 /// <summary>
 /// A field of a form: what it is, what it holds, and — once the document has been laid out — where on
@@ -21,6 +21,12 @@ internal sealed class FormField(FormFieldKind kind, string name)
     public bool Checked { get; set; }
 
     public string[] Options { get; set; } = [];
+
+    /// <summary>
+    /// Which button of a group this one is, for a radio button: the buttons of a group share a name and
+    /// differ in the value they stand for.
+    /// </summary>
+    public string? Export { get; set; }
 
     /// <summary>What the field is for; shown as a tooltip and announced by a reader for the blind.</summary>
     public string? Tooltip { get; set; }
@@ -106,15 +112,19 @@ internal sealed class FormFieldElement(FormField formField) : Element
 
     internal override void Reset() => _style = null;
 
-    /// <summary>The size of the box, which for everything but a checkbox spans the available width.</summary>
+    /// <summary>The size of the box, which for everything but a tick or a button spans the available width.</summary>
     private (float Width, float Height) Box(Size available, LayoutContext context)
     {
         var style = Style(context);
-        if (formField.Kind == FormFieldKind.Checkbox)
+        if (formField.Kind is FormFieldKind.Checkbox or FormFieldKind.Radio)
         {
             var side = formField.RequestedHeight ?? Math.Max(MathF.Round(style.Size), 10);
             return (side, side);
         }
+
+        // A signature needs room for a name and a date, so it is taller than a line of text.
+        if (formField.Kind == FormFieldKind.Signature)
+            return (available.Width, formField.RequestedHeight ?? 48);
 
         var lines = formField.Multiline ? 3 : 1;
         var height = formField.RequestedHeight ?? MathF.Max(style.LineHeight * lines + 2 * Padding, 18);

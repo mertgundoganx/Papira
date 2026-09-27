@@ -55,7 +55,19 @@ internal static class DocumentRenderer
                 context = Layout(document, settings, pages, total);
             }
 
-            Emit(pages, context, metadata, settings, attachments, output);
+            if (settings.Signature is { } signature)
+            {
+                // The signature covers the whole file, so it is written into a buffer, signed and copied.
+                using var file = new MemoryStream();
+                var placeholder = Emit(pages, context, metadata, settings, attachments, file);
+                SignatureWriter.Sign(file, placeholder!, signature, signature.Date ?? DateTimeOffset.Now);
+                file.Position = 0;
+                file.CopyTo(output);
+            }
+            else
+            {
+                Emit(pages, context, metadata, settings, attachments, output);
+            }
         }
         finally
         {
@@ -181,10 +193,13 @@ internal static class DocumentRenderer
         context.Canvas.Translate(-x, -y);
     }
 
-    private static void Emit(List<PageOutput> pages, LayoutContext context, DocumentMetadata metadata, DocumentSettings settings, IReadOnlyList<DocumentAttachment> attachments, Stream output)
+    private static SignaturePlaceholder? Emit(List<PageOutput> pages, LayoutContext context, DocumentMetadata metadata, DocumentSettings settings, IReadOnlyList<DocumentAttachment> attachments, Stream output)
     {
         var resources = context.Canvas.Resources;
         var standard = settings.Standard;
+        if (settings.Signature != null && settings.Encryption != null)
+            throw new InvalidOperationException("A signed document cannot be encrypted: the signature is written into the file, and encrypting it would break it.");
+
         if (standard == PdfStandard.PdfA2b && attachments.Count > 0)
             throw new InvalidOperationException("PDF/A-2b does not allow attachments; use PdfStandard.PdfA3b instead.");
         if (standard != PdfStandard.None && settings.Encryption != null)
@@ -204,7 +219,9 @@ internal static class DocumentRenderer
 
         // The appearances of the form are drawn with the same fonts as the pages, so the glyphs they need
         // have to be known before the fonts are subset.
-        var formFields = pages.SelectMany(page => page.Fields).ToList();
+        var pageFields = pages.Select(page => page.Fields.ToList()).ToList();
+        var signatureField = SignatureField(settings, pageFields);
+        var formFields = pageFields.SelectMany(fields => fields).ToList();
         FormWriter.Prepare(formFields, resources);
 
         var fonts = resources.Fonts.Select(f => new FontOutput(f)).ToList();
@@ -247,9 +264,18 @@ internal static class DocumentRenderer
         var infoId = writer.ReserveObject();
         var o = writer.Out;
 
+        // The signature is reserved before the pages, so that the field which is signed can point at it.
+        var signatureId = settings.Signature != null ? writer.ReserveObject() : 0;
+
         // Page ids are reserved up front so links can point to later pages.
         var annotations = new List<(StructureElement? Structure, int Id)>();
         var fieldIds = new List<int>();
+
+        // The buttons of a radio group are the widgets of one field, which is written after the pages.
+        var radioGroups = formFields
+            .Where(field => field.Kind == FormFieldKind.Radio)
+            .GroupBy(field => field.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => (Id: writer.ReserveObject(), Buttons: group.ToList(), Widgets: new List<int>()), StringComparer.Ordinal);
         var pageIds = new int[pages.Count];
         for (var i = 0; i < pages.Count; i++)
             pageIds[i] = writer.ReserveObject();
@@ -262,7 +288,7 @@ internal static class DocumentRenderer
             // Links to unknown sections are dropped.
             var links = page.Links.Where(link => link.Uri != null || context.Sections.ContainsKey(link.Section!)).ToArray();
             var linkIds = links.Select(_ => writer.ReserveObject()).ToArray();
-            var widgetIds = page.Fields.Select(_ => writer.ReserveObject()).ToArray();
+            var widgetIds = pageFields[i].Select(_ => writer.ReserveObject()).ToArray();
 
             writer.BeginObject(pageIds[i]);
             o.Ascii("<</Type/Page/Parent ").Int(pagesId).Ascii(" 0 R/MediaBox[0 0 ")
@@ -295,13 +321,32 @@ internal static class DocumentRenderer
                 WriteLink(writer, linkIds[l], links[l], context.Sections, pageIds, standard != PdfStandard.None, context.Structure != null ? pages.Count + annotations.Count - 1 : -1);
             }
 
-            for (var f = 0; f < page.Fields.Length; f++)
+            for (var f = 0; f < pageFields[i].Count; f++)
             {
-                annotations.Add((page.Fields[f].Structure, widgetIds[f]));
-                fieldIds.Add(widgetIds[f]);
-                FormWriter.Write(writer, widgetIds[f], page.Fields[f], resources, resourcesId,
-                    context.Structure != null ? pages.Count + annotations.Count - 1 : -1, level);
+                var field = pageFields[i][f];
+                annotations.Add((field.Structure, widgetIds[f]));
+
+                var parent = 0;
+                if (field.Kind == FormFieldKind.Radio && radioGroups.TryGetValue(field.Name, out var group))
+                {
+                    parent = group.Id;
+                    group.Widgets.Add(widgetIds[f]);
+                }
+                else
+                {
+                    fieldIds.Add(widgetIds[f]);
+                }
+
+                FormWriter.Write(writer, widgetIds[f], field, resources, resourcesId,
+                    context.Structure != null ? pages.Count + annotations.Count - 1 : -1, level, parent,
+                    ReferenceEquals(field, signatureField) ? signatureId : 0);
             }
+        }
+
+        foreach (var (id, buttons, widgets) in radioGroups.Values)
+        {
+            FormWriter.WriteRadioGroup(writer, id, buttons, widgets);
+            fieldIds.Add(id);
         }
 
         var fontIds = new List<(string Name, int Id)>();
@@ -319,6 +364,13 @@ internal static class DocumentRenderer
         var maskIds = new List<(string Name, int Id)>();
         foreach (var (name, shading, width, height) in resources.SoftMasks)
             maskIds.Add((name, WriteSoftMask(writer, shading, width, height, level != null)));
+
+        foreach (var mask in resources.MaskForms)
+            maskIds.Add((mask.Name, WriteMaskForm(writer, mask, resourcesId, level)));
+
+        var tilingIds = new List<(string Name, int Id)>();
+        foreach (var tiling in resources.Tilings)
+            tilingIds.Add((tiling.Name, WriteTiling(writer, tiling, resourcesId, level)));
 
         writer.BeginObject(resourcesId);
         o.Ascii("<<");
@@ -350,10 +402,10 @@ internal static class DocumentRenderer
             o.Ascii(">>");
         }
 
-        if (shadingIds.Count > 0)
+        if (shadingIds.Count > 0 || tilingIds.Count > 0)
         {
             o.Ascii("/Pattern<<");
-            foreach (var (name, id) in shadingIds)
+            foreach (var (name, id) in shadingIds.Concat(tilingIds))
                 o.Byte((byte)'/').Ascii(name).Space().Int(id).Ascii(" 0 R");
             o.Ascii(">>");
         }
@@ -397,6 +449,11 @@ internal static class DocumentRenderer
                 b => b.Ascii("/N 3"), level != null);
         }
 
+        var signedAt = settings.Signature?.Date ?? DateTimeOffset.Now;
+        var placeholder = settings.Signature is { } signatureSettings
+            ? SignatureWriter.Write(writer, signatureId, signatureSettings, signedAt)
+            : null;
+
         var structureId = context.Structure is { } structure
             ? WriteStructure(writer, structure, pageIds, annotations, metadata)
             : 0;
@@ -416,7 +473,11 @@ internal static class DocumentRenderer
                 o.Int(id).Ascii(" 0 R ");
 
             // Papira draws every appearance itself, so a viewer has nothing left to regenerate.
-            o.Ascii("]/NeedAppearances false/DR ").Int(resourcesId).Ascii(" 0 R/DA");
+            o.Ascii("]");
+            if (formFields.Exists(field => field.Kind == FormFieldKind.Signature))
+                o.Ascii("/SigFlags 3");
+
+            o.Ascii("/NeedAppearances false/DR ").Int(resourcesId).Ascii(" 0 R/DA");
             writer.AsciiString(FormWriter.DefaultAppearance(
                 resources.GetFont(formFields[0].Style!.Font.Font).Name, formFields[0]));
             o.Ascii(">>");
@@ -473,6 +534,37 @@ internal static class DocumentRenderer
         }
 
         writer.WriteTrailer(catalogId, infoId, encryptId);
+        return placeholder;
+    }
+
+    /// <summary>
+    /// The field the signature belongs to. A document that has none is still signed: an empty field is
+    /// added for it, which is what an invisible signature is.
+    /// </summary>
+    private static FormField? SignatureField(DocumentSettings settings, List<List<FormField>> pageFields)
+    {
+        if (settings.Signature is not { } signature)
+            return null;
+
+        var fields = pageFields.SelectMany(fields => fields).Where(field => field.Kind == FormFieldKind.Signature).ToList();
+        if (signature.FieldName is { Length: > 0 } name)
+        {
+            return fields.Find(field => string.Equals(field.Name, name, StringComparison.Ordinal))
+                ?? throw new InvalidOperationException($"The document has no signature field named '{name}'. Add one with SignatureField(\"{name}\"), or leave the name out to sign the document invisibly.");
+        }
+
+        if (fields.Count > 0)
+            return fields[0];
+
+        // Nothing was drawn for the signature, so it gets a field of no size on the first page.
+        var invisible = new FormField(FormFieldKind.Signature, "Signature1")
+        {
+            Style = new Elements.ResolvedTextStyle(TextStyle.BuiltIn),
+            Tooltip = signature.Reason ?? "Signature",
+        };
+
+        pageFields[0].Add(invisible);
+        return invisible;
     }
 
     private static void WriteRawHex(ByteBuffer o, string key, byte[] data)
@@ -597,6 +689,53 @@ internal static class DocumentRenderer
         o.Ascii("<</Type/ExtGState/SMask<</Type/Mask/S/Luminosity/BC[0]/G ").Int(formId).Ascii(" 0 R>>>>");
         writer.EndObject();
         return stateId;
+    }
+
+    /// <summary>
+    /// Writes a mask drawn from part of a drawing: the drawing goes into a form of its own, and what is
+    /// drawn through the mask shows only where that form is light.
+    /// </summary>
+    private static int WriteMaskForm(PdfWriter writer, MaskForm mask, int resourcesId, CompressionLevel? level)
+    {
+        var formId = writer.ReserveObject();
+        var compressed = level is { } compression ? PdfWriter.Deflate(mask.Content, compression) : null;
+
+        writer.WriteStream(
+            formId,
+            compressed ?? mask.Content,
+            b => b.Ascii("/Type/XObject/Subtype/Form/FormType 1/BBox[")
+                .Real(mask.Left).Space().Real(mask.Bottom).Space().Real(mask.Right).Space().Real(mask.Top)
+                .Ascii("]/Group<</Type/Group/S/Transparency/CS/DeviceRGB/I false/K false>>/Resources ")
+                .Int(resourcesId).Ascii(" 0 R"),
+            compressed != null);
+
+        var stateId = writer.ReserveObject();
+        writer.BeginObject(stateId);
+
+        // The backdrop is black, so everything the mask does not draw on is hidden.
+        writer.Out.Ascii("<</Type/ExtGState/SMask<</Type/Mask/S/Luminosity/BC[0 0 0]/G ").Int(formId).Ascii(" 0 R>>>>");
+        writer.EndObject();
+        return stateId;
+    }
+
+    /// <summary>Writes one tile of a pattern and how it is repeated over the page.</summary>
+    private static int WriteTiling(PdfWriter writer, TilingPattern tiling, int resourcesId, CompressionLevel? level)
+    {
+        var id = writer.ReserveObject();
+        var compressed = level is { } compression ? PdfWriter.Deflate(tiling.Content, compression) : null;
+        var m = tiling.Matrix;
+
+        writer.WriteStream(
+            id,
+            compressed ?? tiling.Content,
+            b => b.Ascii("/Type/Pattern/PatternType 1/PaintType 1/TilingType 1/BBox[")
+                .Real(tiling.Left).Space().Real(tiling.Bottom).Space().Real(tiling.Right).Space().Real(tiling.Top)
+                .Ascii("]/XStep ").Real(tiling.XStep).Ascii("/YStep ").Real(tiling.YStep)
+                .Ascii("/Matrix[").Real(m.A).Space().Real(m.B).Space().Real(m.C).Space().Real(m.D).Space().Real(m.E).Space().Real(m.F)
+                .Ascii("]/Resources ").Int(resourcesId).Ascii(" 0 R"),
+            compressed != null);
+
+        return id;
     }
 
     private static void WriteCoordinates(ByteBuffer o, Shading shading)

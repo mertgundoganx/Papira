@@ -52,16 +52,63 @@ internal sealed class Canvas(DocumentResources resources)
         set => _tagging = value;
     }
 
-    public void BeginPage(ByteBuffer output, float pageWidth, float pageHeight)
+    public void BeginPage(ByteBuffer output, float pageWidth, float pageHeight) =>
+
+        // Layout y grows downwards from the top of the page; PDF y grows upwards from the bottom.
+        BeginContent(output, pageWidth, pageHeight, new Matrix(1, 0, 0, -1, 0, pageHeight));
+
+    /// <summary>
+    /// Starts a stream of its own — the inside of a mask or of one tile of a pattern — which is drawn
+    /// with the transform it is given rather than the one of a page.
+    /// </summary>
+    public void BeginContent(ByteBuffer output, float pageWidth, float pageHeight, Matrix transform)
     {
         _out = output;
         _matrices.Clear();
         _pageWidth = pageWidth;
         _pageHeight = pageHeight;
         _shadingMask = false;
+        _matrix = transform;
+        ResetGraphicsState();
+    }
 
-        // Layout y grows downwards from the top of the page; PDF y grows upwards from the bottom.
-        _matrix = new Matrix(1, 0, 0, -1, 0, pageHeight);
+    /// <summary>
+    /// Says what a piece of drawing stands for in words. The scripts of India draw a syllable in an
+    /// order of their own, so the glyphs alone would extract as the letters shuffled; this hands the
+    /// reader the text as it was written.
+    /// </summary>
+    public void BeginActualText(ReadOnlySpan<int> codepoints)
+    {
+        EndText();
+        _out.Ascii("/Span<</ActualText<FEFF");
+        foreach (var codepoint in codepoints)
+        {
+            if (codepoint <= 0xFFFF)
+            {
+                _out.Hex16((ushort)codepoint);
+            }
+            else
+            {
+                var value = codepoint - 0x10000;
+                _out.Hex16((ushort)(0xD800 + (value >> 10)));
+                _out.Hex16((ushort)(0xDC00 + (value & 0x3FF)));
+            }
+        }
+
+        _out.Ascii(">>>BDC\n");
+    }
+
+    public void EndActualText()
+    {
+        EndText();
+        _out.Ascii("EMC\n");
+    }
+
+    /// <summary>Applies a graphics state the document already holds, such as a mask.</summary>
+    public void BeginState(string name)
+    {
+        EndText();
+        _out.Ascii("q /").Ascii(name).Ascii(" gs\n");
         ResetGraphicsState();
     }
 
@@ -147,7 +194,8 @@ internal sealed class Canvas(DocumentResources resources)
 
     public void Scale(float x, float y) => Concat(Matrix.Scaling(x, y));
 
-    private void Concat(Matrix local) => _matrix = Matrix.Multiply(local, _matrix);
+    /// <summary>Applies a transform of its own inside the one already in force.</summary>
+    public void Concat(Matrix local) => _matrix = Matrix.Multiply(local, _matrix);
 
     public void PushTransform() => _matrices.Push(_matrix);
 
@@ -353,6 +401,15 @@ internal sealed class Canvas(DocumentResources resources)
         }
 
         var name = resources.GetShading(placed);
+        _out.Ascii("/Pattern cs /").Ascii(name).Ascii(" scn\n");
+        _fill = null;
+    }
+
+    /// <summary>Fills the path that follows with a pattern the document already holds.</summary>
+    public void BeginPatternPath(string name)
+    {
+        MarkContent();
+        EndText();
         _out.Ascii("/Pattern cs /").Ascii(name).Ascii(" scn\n");
         _fill = null;
     }

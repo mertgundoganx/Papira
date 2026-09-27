@@ -364,6 +364,25 @@ public static class ContainerExtensions
     public static CheckboxDescriptor Checkbox(this IContainer container, string name) =>
         new(container.Assign(new FormFieldElement(new FormField(FormFieldKind.Checkbox, Named(name)))).Field);
 
+    /// <summary>
+    /// One button of a group, of which a reader picks exactly one. All the buttons of a group share the
+    /// name; <paramref name="value"/> is what this one stands for in the filled-in form.
+    /// </summary>
+    public static RadioDescriptor Radio(this IContainer container, string name, string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+
+        var field = new FormField(FormFieldKind.Radio, Named(name)) { Export = value };
+        return new RadioDescriptor(container.Assign(new FormFieldElement(field)).Field);
+    }
+
+    /// <summary>
+    /// A place for a signature. Left as it is, it is a line to sign by hand and a field a reader can
+    /// sign on screen; <see cref="DocumentSettings.Signature"/> signs it as the document is written.
+    /// </summary>
+    public static SignatureFieldDescriptor SignatureField(this IContainer container, string name) =>
+        new(container.Assign(new FormFieldElement(new FormField(FormFieldKind.Signature, Named(name)))).Field);
+
     /// <summary>A list a reader picks one of the given options from.</summary>
     public static DropdownDescriptor Dropdown(this IContainer container, string name, params string[] options)
     {

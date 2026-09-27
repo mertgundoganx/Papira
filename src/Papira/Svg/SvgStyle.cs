@@ -3,7 +3,7 @@ using Papira.Rendering;
 
 namespace Papira.Svg;
 
-internal enum SvgPaintKind : byte { None, Solid, Gradient }
+internal enum SvgPaintKind : byte { None, Solid, Gradient, Pattern }
 
 /// <summary>
 /// A linear or radial gradient as the file declares it. <paramref name="UserSpace"/> tells whether the
@@ -21,7 +21,7 @@ internal sealed record SvgGradient(
     bool UserSpace,
     Matrix Transform);
 
-internal readonly record struct SvgPaint(SvgPaintKind Kind, Color Color, SvgGradient? Gradient)
+internal readonly record struct SvgPaint(SvgPaintKind Kind, Color Color, SvgGradient? Gradient, SvgPattern? Pattern = null)
 {
     /// <summary>"none": the shape is not painted at all.</summary>
     public static SvgPaint None => default;
@@ -31,6 +31,9 @@ internal readonly record struct SvgPaint(SvgPaintKind Kind, Color Color, SvgGrad
     /// <summary>A gradient also carries its first stop, which strokes and unsupported cases fall back to.</summary>
     public static SvgPaint FromGradient(SvgGradient gradient) =>
         new(SvgPaintKind.Gradient, gradient.Stops.Length > 0 ? gradient.Stops[0].Color : Colors.Black, gradient);
+
+    /// <summary>A pattern also carries a colour, which is what a shape falls back to where it cannot be drawn.</summary>
+    public static SvgPaint FromPattern(SvgPattern pattern) => new(SvgPaintKind.Pattern, Colors.Grey.Medium, null, pattern);
 
     public bool Paints => Kind != SvgPaintKind.None;
 }

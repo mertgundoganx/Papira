@@ -31,7 +31,8 @@ internal sealed class PdfWriter : IDisposable
         _buffer.Ascii(encryptor == null ? "%PDF-1.7\n%" : "%PDF-2.0\n%").Bytes([0xE2, 0xE3, 0xCF, 0xD3]).NewLine();
     }
 
-    private long Position => _flushed + _buffer.Length;
+    /// <summary>How many bytes have been written so far, which is where the next one goes.</summary>
+    public long Position => _flushed + _buffer.Length;
 
     /// <summary>Buffer for writing the body of the object currently being emitted.</summary>
     public ByteBuffer Out => _buffer;

@@ -541,6 +541,29 @@ public sealed class CheckboxDescriptor : FormFieldDescriptor<CheckboxDescriptor>
     }
 }
 
+/// <summary>One button of a group, of which a reader picks exactly one.</summary>
+public sealed class RadioDescriptor : FormFieldDescriptor<RadioDescriptor>
+{
+    internal RadioDescriptor(FormField field) : base(field)
+    {
+    }
+
+    /// <summary>Starts out as the button of the group that is chosen.</summary>
+    public RadioDescriptor Checked(bool chosen = true)
+    {
+        Field.Checked = chosen;
+        return this;
+    }
+}
+
+/// <summary>A place for a signature: a field a reader signs, or a line to sign by hand.</summary>
+public sealed class SignatureFieldDescriptor : FormFieldDescriptor<SignatureFieldDescriptor>
+{
+    internal SignatureFieldDescriptor(FormField field) : base(field)
+    {
+    }
+}
+
 /// <summary>A list a reader picks one entry from.</summary>
 public sealed class DropdownDescriptor : FormFieldDescriptor<DropdownDescriptor>
 {

@@ -108,10 +108,13 @@ internal sealed class TextElement : Element
     private byte[] _levelOf = [];
     private int[] _cluster = [];
     private ushort[] _clusterLength = [];
+    private float[] _offsetX = [];   // where positioning moves the glyph, in points
+    private float[] _offsetY = [];
     private int[] _visual = [];    // scratch: the order the glyphs of one line are drawn in
     private int _length;
     private bool _bidi;
     private bool _hasLigatures;
+    private bool _hasOffsets;     // any glyph is drawn away from where the pen stands
     private bool _hasComplexScript;
     private bool _plainDirection;
     private byte _paragraphLevel;
@@ -165,6 +168,7 @@ internal sealed class TextElement : Element
         _length = 0;
         _paragraphLevel = 0;
         _hasLigatures = false;
+        _hasOffsets = false;
 
         // Text that neither changes direction nor joins its letters is drawn as it is written.
         if (!_bidi && !_hasComplexScript)
@@ -295,7 +299,8 @@ internal sealed class TextElement : Element
                 if (IsIgnorable(codepoint))
                     continue;
 
-                _hasComplexScript |= TextShaper.ScriptOf(codepoint) != 0 || TextShaper.IsEmoji(codepoint);
+                _hasComplexScript |= TextShaper.ScriptOf(codepoint) != 0 || TextShaper.IsEmoji(codepoint) ||
+                    (codepoint >= 0x0300 && TextShaper.IsCombining(codepoint));
                 _plainDirection &= Bidi.IsPlainLeftToRight(codepoint);
                 _text[n] = codepoint == '\t' ? ' ' : codepoint;
                 _spanStyleOf[n] = primary;
@@ -390,7 +395,7 @@ internal sealed class TextElement : Element
         // Text of no particular script, running left to right, is drawn as it is written: one glyph per
         // character, with the glyph the font manager already found. A font that draws pictures composes
         // them from several characters, so its text goes through the shaper as a cursive script does.
-        if (script == 0 && !rightToLeft && font.Colors.IsEmpty && !RunHasEmoji(start, end))
+        if (script == 0 && !rightToLeft && font.Colors.IsEmpty && !RunNeedsShaping(start, end))
         {
             for (var i = start; i < end; i++)
             {
@@ -401,13 +406,28 @@ internal sealed class TextElement : Element
         else
         {
             _buffer ??= new ShapingBuffer();
-            TextShaper.Shape(font, _text.AsSpan(start, end - start), script, rightToLeft, _buffer);
+            TextShaper.Shape(font, _text.AsSpan(start, end - start), script, rightToLeft, _buffer, ligatures: style.LetterSpacing == 0);
 
             foreach (var shaped in _buffer.Glyphs)
             {
                 _hasLigatures |= shaped.Length > 1;
-                Append(shaped.Glyph, start + shaped.Cluster, shaped.Length, styleIndex, level, Advance(style, shaped.Glyph));
+
+                // A mark is drawn on the letter before it, so it takes no letter spacing of its own.
+                var advance = (shaped.BaseAdvance + shaped.XAdvance) * style.Scale + (shaped.Mark ? 0 : style.LetterSpacing);
+                Append(
+                    shaped.Glyph,
+                    start + shaped.Cluster,
+                    shaped.Length,
+                    styleIndex,
+                    level,
+                    advance,
+                    shaped.XOffset * style.Scale,
+                    shaped.YOffset * style.Scale);
             }
+
+            // The font positioned the pairs itself; kerning them again would space them twice.
+            if (font.Positioning.HasKerning(TextShaper.ScriptTag(script)))
+                return;
         }
 
         ApplyKerning(first, _length);
@@ -416,11 +436,15 @@ internal sealed class TextElement : Element
     private static float Advance(ResolvedTextStyle style, ushort glyph) =>
         style.Font.Font.GetAdvance(glyph) * style.Scale + style.LetterSpacing;
 
-    private bool RunHasEmoji(int start, int end)
+    /// <summary>
+    /// True when the run holds characters the font has to compose or position itself: the pictures an
+    /// emoji font builds out of several characters, and the marks that belong on the letter before them.
+    /// </summary>
+    private bool RunNeedsShaping(int start, int end)
     {
         for (var i = start; i < end; i++)
         {
-            if (TextShaper.IsEmoji(_text[i]))
+            if (TextShaper.IsEmoji(_text[i]) || (_text[i] >= 0x0300 && TextShaper.IsCombining(_text[i])))
                 return true;
         }
 
@@ -439,11 +463,14 @@ internal sealed class TextElement : Element
         return 0;
     }
 
-    private void Append(ushort glyph, int cluster, int clusterLength, int styleIndex, byte level, float advance)
+    private void Append(ushort glyph, int cluster, int clusterLength, int styleIndex, byte level, float advance, float offsetX = 0, float offsetY = 0)
     {
         if (_length == _glyphs.Length)
             GrowGlyphs(_length + 1);
 
+        _offsetX[_length] = offsetX;
+        _offsetY[_length] = offsetY;
+        _hasOffsets |= offsetX != 0 || offsetY != 0;
         _glyphs[_length] = glyph;
         _codepoints[_length] = _text[cluster];
         _advances[_length] = advance;
@@ -477,6 +504,8 @@ internal sealed class TextElement : Element
             _levelOf = new byte[characters];
             _cluster = new int[characters];
             _clusterLength = new ushort[characters];
+            _offsetX = new float[characters];
+            _offsetY = new float[characters];
             _visual = new int[characters];
         }
     }
@@ -493,6 +522,8 @@ internal sealed class TextElement : Element
         Array.Resize(ref _levelOf, capacity);
         Array.Resize(ref _cluster, capacity);
         Array.Resize(ref _clusterLength, capacity);
+        Array.Resize(ref _offsetX, capacity);
+        Array.Resize(ref _offsetY, capacity);
         Array.Resize(ref _visual, capacity);
     }
 
@@ -788,9 +819,8 @@ internal sealed class TextElement : Element
                 var rightToLeft = _bidi && (_levelOf[order[runStart]] & 1) == 1;
                 var from = Math.Min(order[runStart], order[k - 1]);
                 var to = Math.Max(order[runStart], order[k - 1]);
-                runX += span.IsLink
-                    ? DrawLinkedRun(span, style, from, to, rightToLeft, runX, baseline, context)
-                    : DrawRun(style, from, to, rightToLeft, runX, baseline, ResumeTag(context));
+
+                runX += DrawSyllables(span, style, from, to, rightToLeft, runX, baseline, context);
             }
 
             runStart = k;
@@ -804,6 +834,69 @@ internal sealed class TextElement : Element
                 runStart = k + 1;
             }
         }
+    }
+
+    /// <summary>
+    /// Draws a run, saying what each syllable stands for wherever its glyphs are drawn in a different
+    /// order than it was written in. The scripts of India write a vowel after its consonant and draw it
+    /// before; without this the text would come out of the file with its letters shuffled.
+    /// </summary>
+    private float DrawSyllables(TextSpan span, ResolvedTextStyle style, int from, int to, bool rightToLeft, float x, float baseline, LayoutContext context)
+    {
+        // Text that reads the other way round is not reordered: a reader knows what to do with that.
+        if (rightToLeft || !NeedsActualText(from, to))
+        {
+            return span.IsLink
+                ? DrawLinkedRun(span, style, from, to, rightToLeft, x, baseline, context)
+                : DrawRun(style, from, to, rightToLeft, x, baseline, ResumeTag(context));
+        }
+
+        float width = 0;
+        var start = from;
+        while (start <= to)
+        {
+            // One syllable: the glyphs that came out of the same stretch of characters.
+            var end = start;
+            int lo = _cluster[start], hi = _cluster[start] + _clusterLength[start];
+            while (end + 1 <= to && _cluster[end + 1] < hi)
+            {
+                end++;
+                lo = Math.Min(lo, _cluster[end]);
+                hi = Math.Max(hi, _cluster[end] + _clusterLength[end]);
+            }
+
+            var shuffled = IsShuffled(start, end);
+            if (shuffled)
+                context.Canvas.BeginActualText(_text.AsSpan(lo, hi - lo));
+
+            width += span.IsLink
+                ? DrawLinkedRun(span, style, start, end, false, x + width, baseline, context)
+                : DrawRun(style, start, end, false, x + width, baseline, ResumeTag(context));
+
+            if (shuffled)
+                context.Canvas.EndActualText();
+
+            start = end + 1;
+        }
+
+        return width;
+    }
+
+    /// <summary>True when any glyph of the run comes before one it was written after.</summary>
+    private bool NeedsActualText(int from, int to) => IsShuffled(from, to);
+
+    private bool IsShuffled(int from, int to)
+    {
+        var last = _cluster[from];
+        for (var i = from + 1; i <= to; i++)
+        {
+            if (_cluster[i] < last)
+                return true;
+
+            last = _cluster[i];
+        }
+
+        return false;
     }
 
     /// <summary>The span a character came from, through the style it was drawn with.</summary>
@@ -954,6 +1047,12 @@ internal sealed class TextElement : Element
         for (var k = from; k <= to; k++)
             width += _advances[k];
 
+        if (_hasOffsets && HasOffset(from, to))
+        {
+            DrawPositioned(style, from, to, rightToLeft, x, baseline, canvas);
+            return width;
+        }
+
         var length = to - from + 1;
         if (!rightToLeft)
         {
@@ -979,6 +1078,41 @@ internal sealed class TextElement : Element
 
         canvas.DrawGlyphs(style, x, baseline, _reverseGlyphs.AsSpan(0, length), _reverseCodepoints.AsSpan(0, length), _reverseKerning.AsSpan(0, length));
         return width;
+    }
+
+    private bool HasOffset(int from, int to)
+    {
+        for (var k = from; k <= to; k++)
+        {
+            if (_offsetX[k] != 0 || _offsetY[k] != 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Draws a run in which the font moved glyphs off the line the pen follows — an accent over its
+    /// letter, say. Each glyph is placed on its own, because a single run of text can only be moved
+    /// along the line, not across it.
+    /// </summary>
+    private void DrawPositioned(ResolvedTextStyle style, int from, int to, bool rightToLeft, float x, float baseline, Canvas canvas)
+    {
+        var pen = x;
+        var length = to - from + 1;
+        for (var i = 0; i < length; i++)
+        {
+            var position = rightToLeft ? to - i : from + i;
+            canvas.DrawGlyphs(
+                style,
+                pen + _offsetX[position],
+                baseline - _offsetY[position],
+                _glyphs.AsSpan(position, 1),
+                _codepoints.AsSpan(position, 1),
+                []);
+
+            pen += _advances[position];
+        }
     }
 
     private static void DrawDecorations(ResolvedTextStyle style, float x, float baseline, float width, Canvas canvas)

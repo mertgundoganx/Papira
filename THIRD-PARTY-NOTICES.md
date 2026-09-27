@@ -43,6 +43,26 @@ part of the NuGet package.
 - Source: https://github.com/adobe-fonts/source-sans
 - Full license text: [`tests/Papira.Tests/Fonts/SourceSans3-OFL.txt`](tests/Papira.Tests/Fonts/SourceSans3-OFL.txt)
 
+## Noto Sans Devanagari and Noto Sans Tamil (tests and samples only)
+
+The test suite and the feature sample use subsets of these fonts to check the shaping of the Indic
+scripts. They are not part of the NuGet package.
+
+- Copyright 2022 The Noto Project Authors (https://github.com/notofonts/devanagari, https://github.com/notofonts/tamil)
+- License: SIL Open Font License, Version 1.1
+- Source: https://fonts.google.com/noto
+- Full license text: [`tests/Papira.Tests/Fonts/NotoIndic-OFL.txt`](tests/Papira.Tests/Fonts/NotoIndic-OFL.txt)
+
+## HarfBuzz (reference only)
+
+No HarfBuzz code is part of Papira. Its Indic shaper was read as a reference while Papira's own was
+written from the OpenType Indic script development specification, and HarfBuzz was used throughout as
+the yardstick Papira's shaping was measured against.
+
+- Copyright © 2011, 2012 Google, Inc.
+- License: the "Old MIT" license HarfBuzz is published under.
+- Source: https://github.com/harfbuzz/harfbuzz
+
 ## RFC 6386 (VP8 bitstream specification)
 
 The constants a VP8 decoder needs — the trees and probabilities its arithmetic decoder is steered by and
@@ -59,7 +79,10 @@ itself is Papira's own.
 The character properties needed for bidirectional and cursive text — bidirectional classes, mirrored
 characters, bracket pairs and Arabic joining types — are compiled into
 [`src/Papira/Text/UnicodeTables.cs`](src/Papira/Text/UnicodeTables.cs) from the Unicode Character Database
-by [`tools/generate-unicode-tables.py`](tools/generate-unicode-tables.py).
+by [`tools/generate-unicode-tables.py`](tools/generate-unicode-tables.py). The properties of the Indic
+scripts — what each character is in a syllable and where in it it belongs — are compiled the same way into
+[`src/Papira/Text/IndicTables.cs`](src/Papira/Text/IndicTables.cs) by
+[`tools/generate-indic-tables.py`](tools/generate-indic-tables.py).
 
 - Copyright © 1991-2026 Unicode, Inc.
 - License: [Unicode License v3](https://www.unicode.org/license.txt), which permits use and redistribution

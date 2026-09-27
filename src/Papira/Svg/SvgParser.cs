@@ -65,7 +65,7 @@ internal sealed class SvgParser
             XmlResolver = null,
             IgnoreComments = true,
             IgnoreProcessingInstructions = true,
-            IgnoreWhitespace = true,
+            IgnoreWhitespace = false,
         };
 
         using var stream = new MemoryStream(data, false);
@@ -110,10 +110,21 @@ internal sealed class SvgParser
 
                         break;
 
-                    case XmlNodeType.Text or XmlNodeType.CDATA:
-                        // Only style sheets need their text; keeping the rest would just cost memory.
-                        if (open.Count > 0 && open.Peek().Name == "style")
+                    case XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.SignificantWhitespace or XmlNodeType.Whitespace:
+                        // Style sheets and text need what they say; keeping the rest would just cost memory.
+                        if (open.Count == 0)
+                            break;
+
+                        if (open.Peek().Name == "style")
+                        {
                             open.Peek().Text += reader.Value;
+                        }
+                        else if (open.Peek().Name is "text" or "tspan" or "textPath")
+                        {
+                            // A piece of text is kept as a child of its own, so that what stands before
+                            // and after a nested element keeps its place.
+                            open.Peek().Children.Add(new SvgXmlElement("#text") { Text = reader.Value });
+                        }
 
                         break;
 
@@ -210,11 +221,16 @@ internal sealed class SvgParser
         var transform = SvgValues.Transform(element.Attribute("transform"));
         var clip = ResolveClip(element, declarations, out var clipEvenOdd);
         var opacity = SvgValues.Opacity(Value(element, declarations, "opacity"));
+        var mask = ResolveMask(element, declarations, style, depth, references);
 
         switch (element.Name)
         {
+            case "text":
+                AppendText(parent, element, style, declarations, transform, clip, clipEvenOdd, opacity, mask);
+                break;
+
             case "g" or "a":
-                var group = Group(transform, clip, clipEvenOdd, opacity);
+                var group = Group(transform, clip, clipEvenOdd, opacity, mask);
                 foreach (var child in element.Children)
                     Append(group, child, style, depth + 1, references);
 
@@ -223,7 +239,7 @@ internal sealed class SvgParser
 
             // Only the first alternative of a <switch> is drawn, as a viewer would do.
             case "switch":
-                var chosen = Group(transform, clip, clipEvenOdd, opacity);
+                var chosen = Group(transform, clip, clipEvenOdd, opacity, mask);
                 if (element.Children.Count > 0)
                     Append(chosen, element.Children[0], style, depth + 1, references);
 
@@ -231,7 +247,7 @@ internal sealed class SvgParser
                 break;
 
             case "svg":
-                var nested = Group(transform, clip, clipEvenOdd, opacity);
+                var nested = Group(transform, clip, clipEvenOdd, opacity, mask);
                 AppendViewport(nested, element, style, null, null, depth, references);
                 Add(parent, nested);
                 break;
@@ -256,10 +272,11 @@ internal sealed class SvgParser
                     Clip = clip,
                     ClipEvenOdd = clipEvenOdd,
                     Opacity = opacity,
+                    Mask = mask,
                 });
                 break;
 
-            // defs, clipPath, mask, pattern, gradients, text, image, filters and metadata are not drawn here.
+            // defs, clipPath, mask, pattern, gradients, image, filters and metadata are not drawn here.
             default:
                 break;
         }
@@ -334,10 +351,10 @@ internal sealed class SvgParser
         Add(parent, group);
     }
 
-    private SvgGroupNode Group(Matrix transform, SvgPath? clip, bool clipEvenOdd, float opacity)
+    private SvgGroupNode Group(Matrix transform, SvgPath? clip, bool clipEvenOdd, float opacity, SvgMask? mask = null)
     {
         _nodes++;
-        return new SvgGroupNode { Transform = transform, Clip = clip, ClipEvenOdd = clipEvenOdd, Opacity = opacity };
+        return new SvgGroupNode { Transform = transform, Clip = clip, ClipEvenOdd = clipEvenOdd, Opacity = opacity, Mask = mask };
     }
 
     private static void Add(SvgGroupNode parent, SvgGroupNode group)
@@ -583,16 +600,345 @@ internal sealed class SvgParser
             if (close < 0)
                 return SvgPaint.None;
 
-            if (Reference(text[..(close + 1)]) is { } id && _byId.TryGetValue(id, out var target) && Gradient(target, 0) is { } gradient)
-                return SvgPaint.FromGradient(gradient);
+            if (Reference(text[..(close + 1)]) is { } id && _byId.TryGetValue(id, out var target))
+            {
+                if (Gradient(target, 0) is { } gradient)
+                    return SvgPaint.FromGradient(gradient);
+
+                if (Pattern(target) is { } pattern)
+                    return SvgPaint.FromPattern(pattern);
+            }
 
             // A paint server may be followed by a fallback color: fill="url(#missing) blue".
             var fallback = text[(close + 1)..].Trim();
             return fallback.Length > 0 ? ParsePaint(fallback, currentColor) : SvgPaint.None;
         }
 
-        // Unsupported paint servers (patterns) and unknown keywords leave the shape unpainted.
+        // Unknown keywords leave the shape unpainted.
         return SvgValues.TryColor(text, out var color) ? SvgPaint.Solid(color) : SvgPaint.None;
+    }
+
+    // ---- Text -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Reads a piece of text: the element itself and the spans inside it, each with where it is written
+    /// and what it looks like. What stands between two spans is a run of its own, in the order it appears.
+    /// </summary>
+    private void AppendText(
+        SvgGroupNode parent,
+        SvgXmlElement element,
+        SvgStyle style,
+        Dictionary<string, string>? declarations,
+        Matrix transform,
+        SvgPath? clip,
+        bool clipEvenOdd,
+        float opacity,
+        SvgMask? mask)
+    {
+        var runs = new List<SvgTextRun>();
+        var pending = default(TextPosition);
+        CollectRuns(element, style, declarations, TextProperties.Initial, runs, ref pending, 0);
+        if (runs.Count == 0)
+            return;
+
+        // Whitespace at the two ends of a piece of text is not drawn, however it was written.
+        runs[0].Text = runs[0].Text.TrimStart(' ');
+        runs[^1].Text = runs[^1].Text.TrimEnd(' ');
+        runs.RemoveAll(run => run.Text.Length == 0);
+        if (runs.Count == 0)
+            return;
+
+        _nodes++;
+        parent.Children.Add(new SvgTextNode
+        {
+            Runs = [.. runs],
+            Transform = transform,
+            Clip = clip,
+            ClipEvenOdd = clipEvenOdd,
+            Opacity = opacity,
+            Mask = mask,
+        });
+    }
+
+    /// <summary>What a piece of text inherits: the font it is written in and where it is anchored.</summary>
+    private readonly record struct TextProperties(string? Family, float FontSize, FontWeight Weight, bool Italic, float LetterSpacing, SvgTextAnchor Anchor)
+    {
+        public static TextProperties Initial => new(null, 16, FontWeight.Normal, false, 0, SvgTextAnchor.Start);
+    }
+
+    /// <summary>Where the next run of a piece of text starts, when an element said so.</summary>
+    private record struct TextPosition(float[] X, float[] Y, float[] Dx, float[] Dy);
+
+    private void CollectRuns(
+        SvgXmlElement element,
+        SvgStyle style,
+        Dictionary<string, string>? declarations,
+        TextProperties inherited,
+        List<SvgTextRun> runs,
+        ref TextPosition pending,
+        int depth)
+    {
+        if (depth > MaxDepth || _nodes >= MaxNodes)
+            return;
+
+        var properties = ReadTextProperties(element, declarations, inherited);
+
+        // What the element says about where it goes waits for the first run it produces, which may well
+        // come from a span inside it.
+        var x = Numbers(element.Attribute("x"));
+        var y = Numbers(element.Attribute("y"));
+        var dx = Numbers(element.Attribute("dx"));
+        var dy = Numbers(element.Attribute("dy"));
+        if (x.Length > 0 || y.Length > 0 || dx.Length > 0 || dy.Length > 0)
+            pending = new TextPosition(x, y, dx, dy);
+
+        foreach (var child in element.Children)
+        {
+            if (child.Name == "#text")
+            {
+                var text = Collapse(child.Text);
+
+                // Whitespace before the first word is not a run of its own; the markup was only indented.
+                if (text.Length == 0 || (runs.Count == 0 && text.AsSpan().Trim().IsEmpty))
+                    continue;
+
+                runs.Add(new SvgTextRun
+                {
+                    Text = text,
+                    X = pending.X ?? [],
+                    Y = pending.Y ?? [],
+                    Dx = pending.Dx ?? [],
+                    Dy = pending.Dy ?? [],
+                    Family = properties.Family,
+                    FontSize = properties.FontSize,
+                    Weight = properties.Weight,
+                    Italic = properties.Italic,
+                    LetterSpacing = properties.LetterSpacing,
+                    Anchor = properties.Anchor,
+                    Style = style,
+                });
+
+                pending = default;
+                _nodes++;
+                continue;
+            }
+
+            if (child.Name is not ("tspan" or "textPath"))
+                continue;
+
+            var childDeclarations = Declarations(child);
+            if (Value(child, childDeclarations, "display")?.Trim() == "none")
+                continue;
+
+            CollectRuns(child, ResolveStyle(child, childDeclarations, style), childDeclarations, properties, runs, ref pending, depth + 1);
+        }
+    }
+
+    private static TextProperties ReadTextProperties(SvgXmlElement element, Dictionary<string, string>? declarations, TextProperties inherited)
+    {
+        var size = inherited.FontSize;
+        if (Value(element, declarations, "font-size") is { Length: > 0 } sizeText)
+            size = SvgValues.Length(sizeText, inherited.FontSize, inherited.FontSize, inherited.FontSize);
+
+        var family = inherited.Family;
+        if (Value(element, declarations, "font-family") is { Length: > 0 } familyText)
+            family = FirstFamily(familyText) ?? family;
+
+        var weight = inherited.Weight;
+        if (Value(element, declarations, "font-weight") is { Length: > 0 } weightText)
+            weight = Weight(weightText, inherited.Weight);
+
+        var italic = inherited.Italic;
+        if (Value(element, declarations, "font-style") is { Length: > 0 } styleText)
+            italic = styleText.Trim() is "italic" or "oblique";
+
+        var spacing = inherited.LetterSpacing;
+        if (Value(element, declarations, "letter-spacing") is { Length: > 0 } spacingText && spacingText.Trim() != "normal")
+            spacing = SvgValues.Length(spacingText, size, 0, size);
+
+        var anchor = inherited.Anchor;
+        if (Value(element, declarations, "text-anchor") is { Length: > 0 } anchorText)
+        {
+            anchor = anchorText.Trim() switch
+            {
+                "middle" => SvgTextAnchor.Middle,
+                "end" => SvgTextAnchor.End,
+                _ => SvgTextAnchor.Start,
+            };
+        }
+
+        return new TextProperties(family, size, weight, italic, spacing, anchor);
+    }
+
+    /// <summary>The first family of a list that is not one of the generic names.</summary>
+    private static string? FirstFamily(string text)
+    {
+        foreach (var part in text.Split(','))
+        {
+            var family = part.Trim().Trim('"', '\'');
+            if (family.Length == 0 || family is "serif" or "sans-serif" or "cursive" or "fantasy" or "system-ui")
+                continue;
+
+            return family is "monospace" ? "Courier New" : family;
+        }
+
+        return null;
+    }
+
+    private static FontWeight Weight(string text, FontWeight fallback) => text.Trim() switch
+    {
+        "bold" or "bolder" => FontWeight.Bold,
+        "normal" => FontWeight.Normal,
+        "lighter" => FontWeight.Light,
+        var number when int.TryParse(number, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var value) =>
+            value switch
+            {
+                <= 150 => FontWeight.Thin,
+                <= 250 => FontWeight.ExtraLight,
+                <= 350 => FontWeight.Light,
+                <= 450 => FontWeight.Normal,
+                <= 550 => FontWeight.Medium,
+                <= 650 => FontWeight.SemiBold,
+                <= 750 => FontWeight.Bold,
+                <= 850 => FontWeight.ExtraBold,
+                _ => FontWeight.Black,
+            },
+        _ => fallback,
+    };
+
+    /// <summary>Text as it is drawn: runs of spaces, tabs and line breaks all stand for a single space.</summary>
+    private static string Collapse(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        var builder = new System.Text.StringBuilder(text.Length);
+        var space = false;
+        foreach (var c in text)
+        {
+            if (c is ' ' or '\t' or '\n' or '\r')
+            {
+                space = true;
+                continue;
+            }
+
+            if (space)
+            {
+                builder.Append(' ');
+                space = false;
+            }
+
+            builder.Append(c);
+        }
+
+        // The spaces at either end are kept: they separate this run from the ones beside it, and the
+        // ones at the ends of the whole piece of text are taken off later.
+        if (space)
+            builder.Append(' ');
+
+        return builder.ToString();
+    }
+
+    // ---- Masks and patterns ---------------------------------------------------------------------
+
+    /// <summary>The mask an element refers to, built from the drawing inside it.</summary>
+    private SvgMask? ResolveMask(SvgXmlElement element, Dictionary<string, string>? declarations, SvgStyle style, int depth, int references)
+    {
+        if (depth > MaxDepth || references > MaxReferenceDepth)
+            return null;
+
+        if (Value(element, declarations, "mask") is not { Length: > 0 } text)
+            return null;
+
+        if (Reference(text) is not { } id || !_byId.TryGetValue(id, out var mask) || mask.Name != "mask")
+            return null;
+
+        var objectBoundingBox = mask.Attribute("maskUnits") != "userSpaceOnUse";
+        var content = new SvgGroupNode();
+        foreach (var child in mask.Children)
+            Append(content, child, style, depth + 1, references + 1);
+
+        if (content.Children.Count == 0)
+            return null;
+
+        // The default area reaches beyond the box on every side, as the specification says.
+        var (x, y, width, height) = objectBoundingBox
+            ? (Fraction(mask.Attribute("x"), -0.1f), Fraction(mask.Attribute("y"), -0.1f),
+               Fraction(mask.Attribute("width"), 1.2f), Fraction(mask.Attribute("height"), 1.2f))
+            : (SvgValues.Length(mask.Attribute("x"), _viewportWidth), SvgValues.Length(mask.Attribute("y"), _viewportHeight),
+               SvgValues.Length(mask.Attribute("width"), _viewportWidth, _viewportWidth), SvgValues.Length(mask.Attribute("height"), _viewportHeight, _viewportHeight));
+
+        return width <= 0 || height <= 0
+            ? null
+            : new SvgMask { Content = content, X = x, Y = y, Width = width, Height = height, ObjectBoundingBox = objectBoundingBox };
+    }
+
+    /// <summary>A pattern, with the drawing that is repeated over and over to fill a shape.</summary>
+    private SvgPattern? Pattern(SvgXmlElement element)
+    {
+        if (element.Name != "pattern" || _nodes >= MaxNodes)
+            return null;
+
+        // The attributes and the content may come from another pattern through href.
+        var chain = new List<SvgXmlElement> { element };
+        var current = element;
+        for (var i = 0; i < MaxReferenceDepth; i++)
+        {
+            if (Reference("url(" + (current.Attribute("href") ?? string.Empty) + ")") is not { } id ||
+                !_byId.TryGetValue(id, out var referenced) || referenced.Name != "pattern" || chain.Contains(referenced))
+            {
+                break;
+            }
+
+            chain.Add(referenced);
+            current = referenced;
+        }
+
+        string? Attribute(string name) => chain.Select(node => node.Attribute(name)).FirstOrDefault(value => value != null);
+
+        var objectBoundingBox = Attribute("patternUnits") != "userSpaceOnUse";
+        var contentObjectBoundingBox = Attribute("patternContentUnits") == "objectBoundingBox";
+        var source = chain.Find(node => node.Children.Count > 0);
+        if (source == null)
+            return null;
+
+        var content = new SvgGroupNode();
+        foreach (var child in source.Children)
+            Append(content, child, SvgStyle.Initial, 1, 1);
+
+        if (content.Children.Count == 0)
+            return null;
+
+        var (x, y, width, height) = objectBoundingBox
+            ? (Fraction(Attribute("x"), 0), Fraction(Attribute("y"), 0), Fraction(Attribute("width"), 0), Fraction(Attribute("height"), 0))
+            : (SvgValues.Length(Attribute("x"), _viewportWidth), SvgValues.Length(Attribute("y"), _viewportHeight),
+               SvgValues.Length(Attribute("width"), _viewportWidth), SvgValues.Length(Attribute("height"), _viewportHeight));
+
+        if (width <= 0 || height <= 0)
+            return null;
+
+        return new SvgPattern
+        {
+            Content = content,
+            X = x,
+            Y = y,
+            Width = width,
+            Height = height,
+            ObjectBoundingBox = objectBoundingBox,
+            ContentObjectBoundingBox = contentObjectBoundingBox,
+            Transform = SvgValues.Transform(Attribute("patternTransform")),
+            ViewBox = Numbers(Attribute("viewBox")),
+        };
+    }
+
+    /// <summary>A value given as a fraction of the bounding box, which may be written as a percentage.</summary>
+    private static float Fraction(string? text, float fallback)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return fallback;
+
+        var value = SvgValues.Number(text, fallback);
+        return text.Contains('%', StringComparison.Ordinal) ? value / 100 : value;
     }
 
     private static string? Reference(string url)

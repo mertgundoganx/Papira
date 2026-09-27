@@ -300,7 +300,8 @@ public class SvgTests
         Assert.Empty(Parse(@"<rect width=""10"" height=""10"" fill=""none""/>").Root.Children);
         Assert.Empty(Parse(@"<rect width=""10"" height=""10"" display=""none""/>").Root.Children);
         Assert.Empty(Parse(@"<rect width=""10"" height=""10"" visibility=""hidden""/>").Root.Children);
-        Assert.Empty(Parse(@"<text x=""0"" y=""10"">not drawn</text>").Root.Children);
+        Assert.Empty(Parse(@"<text x=""0"" y=""10"" display=""none"">not drawn</text>").Root.Children);
+        Assert.Empty(Parse(@"<text x=""0"" y=""10""> </text>").Root.Children);
     }
 
     // ---- Gradients -------------------------------------------------------------------------------
@@ -569,5 +570,140 @@ public class SvgTests
             Markup(@"<rect width=""10"" height=""10"" fill=""#ff0000""/>"));
 
         Assert.Equal(1, image.ShapeCount);
+    }
+
+    // ---- Text, masks and patterns ----------------------------------------------------------------
+
+    [Fact]
+    public void Text_is_drawn_with_the_font_it_asks_for()
+    {
+        var pdf = Inspect(Generate(c => c.Width(200).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 200 60""><text x=""10"" y=""40"" font-size=""20"" fill=""#003366"">Merhaba</text></svg>"))));
+
+        Assert.Equal("Merhaba", pdf.ExtractText().Trim());
+        Assert.Contains("0 0.2 0.4 rg", pdf.PageContents()[0]);
+    }
+
+    [Fact]
+    public void The_spans_of_a_piece_of_text_follow_one_another()
+    {
+        var pdf = Inspect(Generate(c => c.Width(300).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 300 60""><text x=""10"" y=""40"">bir <tspan font-weight=""bold"">iki</tspan> üç</text></svg>"))));
+
+        // The spans are drawn in order, on one line, with the spaces between them kept.
+        Assert.Equal("bir iki üç", pdf.ExtractText().Replace("\n", string.Empty, StringComparison.Ordinal));
+
+        var runs = pdf.TextRuns();
+        Assert.True(runs.Count >= 3);
+        Assert.All(runs, run => Assert.Equal(runs[0].Y, run.Y, 1));
+        for (var i = 1; i < runs.Count; i++)
+            Assert.True(runs[i].X > runs[i - 1].X, "each span starts after the one before it");
+    }
+
+    [Fact]
+    public void A_span_is_written_where_it_says_it_is()
+    {
+        var pdf = Inspect(Generate(c => c.Width(200).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 200 100""><text x=""10"" y=""20"">üst</text><text x=""10"" y=""80"">alt</text></svg>"))));
+
+        var runs = pdf.TextRuns();
+        Assert.Equal(2, runs.Count);
+        Assert.True(runs[0].Y > runs[1].Y, "the second line sits lower on the page");
+    }
+
+    [Theory]
+    [InlineData("start", 0)]
+    [InlineData("middle", -1)]
+    [InlineData("end", -2)]
+    public void Text_is_placed_by_what_it_is_anchored_at(string anchor, int order)
+    {
+        var pdf = Inspect(Generate(c => c.Width(200).Svg(SvgImage.FromString(
+            $@"<svg viewBox=""0 0 200 60""><text x=""100"" y=""40"" text-anchor=""{anchor}"">metin</text></svg>"))));
+
+        var x = pdf.TextRuns()[0].X;
+        var start = 40 + 100;   // the left margin of the test page plus the position in the drawing
+
+        switch (order)
+        {
+            case 0:
+                Assert.True(Math.Abs(x - start) < 1, $"start: {x}");
+                break;
+            case -1:
+                Assert.True(x < start - 5 && x > start - 40, $"middle: {x}");
+                break;
+            default:
+                Assert.True(x < start - 20, $"end: {x}");
+                break;
+        }
+    }
+
+    [Fact]
+    public void A_mask_hides_what_it_is_dark_over()
+    {
+        var pdf = Inspect(Generate(c => c.Width(200).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 100 100"">
+                <defs><mask id=""m""><rect x=""0"" y=""0"" width=""50"" height=""100"" fill=""white""/></mask></defs>
+                <rect width=""100"" height=""100"" fill=""#ff0000"" mask=""url(#m)""/>
+              </svg>"))));
+
+        // The mask is a form of its own, and the graphics state that applies it names it.
+        Assert.Contains("/SMask<</Type/Mask/S/Luminosity", pdf.Raw);
+        Assert.Contains("/Group<</Type/Group/S/Transparency", pdf.Raw);
+        Assert.Matches(@"/GK1 gs", pdf.PageContents()[0]);
+    }
+
+    [Fact]
+    public void A_pattern_fills_a_shape_with_a_drawing_that_repeats()
+    {
+        var pdf = Inspect(Generate(c => c.Width(200).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 100 100"">
+                <defs><pattern id=""p"" width=""10"" height=""10"" patternUnits=""userSpaceOnUse"">
+                  <rect width=""5"" height=""5"" fill=""#0000ff""/></pattern></defs>
+                <rect width=""100"" height=""100"" fill=""url(#p)""/>
+              </svg>"))));
+
+        Assert.Contains("/PatternType 1", pdf.Raw);
+        Assert.Contains("/XStep 10", pdf.Raw);
+        Assert.Contains("/Pattern cs /Pt1 scn", pdf.PageContents()[0]);
+
+        // The tile is clipped to its own box, so half a stroke on the edge cannot spill over.
+        var tile = pdf.Streams().Single(stream => stream.Contains("0 0 1 rg"));
+        Assert.Contains(" W n", tile);
+    }
+
+    [Fact]
+    public void A_pattern_measured_in_the_box_of_the_shape_is_scaled_to_it()
+    {
+        var pdf = Inspect(Generate(c => c.Width(200).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 100 50"">
+                <defs><pattern id=""p"" width=""0.25"" height=""0.5""><rect width=""4"" height=""4"" fill=""#00aa00""/></pattern></defs>
+                <rect x=""0"" y=""0"" width=""100"" height=""50"" fill=""url(#p)""/>
+              </svg>"))));
+
+        // A quarter of the width and half the height of a 100 by 50 box, in the points the page uses.
+        var step = System.Text.RegularExpressions.Regex.Match(pdf.Raw, @"/XStep ([\d.]+)/YStep ([\d.]+)");
+        Assert.True(step.Success);
+        Assert.Equal(25, float.Parse(step.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), 1);
+        Assert.Equal(25, float.Parse(step.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture), 1);
+    }
+
+    [Fact]
+    public void Letters_that_are_spaced_apart_are_not_joined_into_ligatures()
+    {
+        // A browser does the same: the ligature would undo the spacing that was asked for.
+        var spaced = Inspect(Generate(c => c.Width(300).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 300 40""><text x=""0"" y=""30"" letter-spacing=""3"">final</text></svg>"))));
+        var plain = Inspect(Generate(c => c.Width(300).Svg(SvgImage.FromString(
+            @"<svg viewBox=""0 0 300 40""><text x=""0"" y=""30"">final</text></svg>"))));
+
+        Assert.Equal("final", spaced.ExtractText().Trim());
+        Assert.Equal("final", plain.ExtractText().Trim());
+
+        // Five glyphs when they are spaced apart, four when the font may join fi.
+        Assert.True(Glyphs(spaced) > Glyphs(plain), $"{Glyphs(spaced)} vs {Glyphs(plain)}");
+
+        static int Glyphs(PdfInspector pdf) =>
+            System.Text.RegularExpressions.Regex.Matches(pdf.PageContents()[0], "<([0-9A-F]+)> Tj")
+                .Sum(match => match.Groups[1].Value.Length / 4);
     }
 }
