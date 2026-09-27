@@ -20,10 +20,22 @@ internal static class FormWriter
     public static void Prepare(IReadOnlyList<FormField> fields, DocumentResources resources)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
+        var buttons = new HashSet<string>(StringComparer.Ordinal);
         foreach (var field in fields)
         {
-            if (!names.Add(field.Name))
+            // The buttons of a radio group share the name of the group and differ in what they stand for.
+            if (field.Kind == FormFieldKind.Radio)
+            {
+                if (!buttons.Add(field.Name + "\u0000" + field.Export))
+                    throw new InvalidOperationException($"Two buttons of the radio group '{field.Name}' stand for '{field.Export}'. Each button of a group needs a value of its own.");
+
+                if (names.Contains(field.Name))
+                    throw new InvalidOperationException($"'{field.Name}' is the name of both a radio group and another field. Each field of a form needs a name of its own.");
+            }
+            else if (!names.Add(field.Name))
+            {
                 throw new InvalidOperationException($"Two form fields are named '{field.Name}'. Each field of a form needs a name of its own.");
+            }
 
             var font = field.Style!.Font.Font;
             var usage = resources.GetFont(font);
@@ -53,7 +65,8 @@ internal static class FormWriter
 
     /// <summary>
     /// Writes a field and its appearance. The field dictionary and the widget annotation are one object,
-    /// as they may be when a field has a single place on a single page.
+    /// as they may be when a field has a single place on a single page; a button of a radio group is
+    /// only the annotation, and hangs on the object that holds the group.
     /// </summary>
     public static void Write(
         PdfWriter writer,
@@ -62,14 +75,17 @@ internal static class FormWriter
         DocumentResources resources,
         int resourcesId,
         int structParent,
-        CompressionLevel? level)
+        CompressionLevel? level,
+        int parentId = 0,
+        int signatureId = 0)
     {
         var style = field.Style!;
         var fontName = resources.GetFont(style.Font.Font).Name;
+        var state = field.Kind == FormFieldKind.Radio ? Name(field.Export ?? "On") : "Yes";
 
         // The appearances have to be written before the annotation that points at them.
         var normalId = writer.ReserveObject();
-        var offId = field.Kind == FormFieldKind.Checkbox ? writer.ReserveObject() : 0;
+        var offId = field.Kind is FormFieldKind.Checkbox or FormFieldKind.Radio ? writer.ReserveObject() : 0;
         WriteAppearance(writer, normalId, field, fontName, resourcesId, level, ticked: true);
         if (offId != 0)
             WriteAppearance(writer, offId, field, fontName, resourcesId, level, ticked: false);
@@ -79,17 +95,28 @@ internal static class FormWriter
         o.Ascii("<</Type/Annot/Subtype/Widget/F 4/Rect[")
             .Real(field.Left).Space().Real(field.Bottom).Space().Real(field.Right).Space().Real(field.Top).Ascii("]");
 
-        o.Ascii(field.Kind switch
+        if (parentId != 0)
         {
-            FormFieldKind.Checkbox => "/FT/Btn",
-            FormFieldKind.Choice => "/FT/Ch",
-            _ => "/FT/Tx",
-        });
+            // A button of a radio group: the group itself holds the name, the value and the flags.
+            o.Ascii("/Parent ").Int(parentId).Ascii(" 0 R/TU");
+            writer.TextString(field.Tooltip ?? field.Name);
+            o.Ascii("/AS/").Ascii(field.Checked ? state : "Off");
+        }
+        else
+        {
+            o.Ascii(field.Kind switch
+            {
+                FormFieldKind.Checkbox => "/FT/Btn",
+                FormFieldKind.Choice => "/FT/Ch",
+                FormFieldKind.Signature => "/FT/Sig",
+                _ => "/FT/Tx",
+            });
 
-        o.Ascii("/T");
-        writer.TextString(field.Name);
-        o.Ascii("/TU");
-        writer.TextString(field.Tooltip ?? field.Name);
+            o.Ascii("/T");
+            writer.TextString(field.Name);
+            o.Ascii("/TU");
+            writer.TextString(field.Tooltip ?? field.Name);
+        }
 
         var flags = 0;
         if (field.ReadOnly)
@@ -100,11 +127,20 @@ internal static class FormWriter
             flags |= 1 << 12;
         if (field.Kind == FormFieldKind.Choice)
             flags |= 1 << 17; // a dropdown rather than a list box
-        if (flags != 0)
+        if (flags != 0 && parentId == 0)
             o.Ascii("/Ff ").Int(flags);
 
         switch (field.Kind)
         {
+            case FormFieldKind.Radio:
+                break;
+
+            case FormFieldKind.Signature:
+                if (signatureId != 0)
+                    o.Ascii("/V ").Int(signatureId).Ascii(" 0 R");
+
+                break;
+
             case FormFieldKind.Checkbox:
                 o.Ascii(field.Checked ? "/V/Yes/DV/Yes/AS/Yes" : "/V/Off/DV/Off/AS/Off");
                 break;
@@ -142,13 +178,63 @@ internal static class FormWriter
         if (offId == 0)
             o.Space().Int(normalId).Ascii(" 0 R>>");
         else
-            o.Ascii("<</Yes ").Int(normalId).Ascii(" 0 R/Off ").Int(offId).Ascii(" 0 R>>>>");
+            o.Ascii("<</").Ascii(state).Space().Int(normalId).Ascii(" 0 R/Off ").Int(offId).Ascii(" 0 R>>>>");
 
         if (structParent >= 0)
             o.Ascii("/StructParent ").Int(structParent);
 
         o.Ascii(">>");
         writer.EndObject();
+    }
+
+    /// <summary>
+    /// Writes the field a group of radio buttons belongs to. The buttons themselves are its widgets:
+    /// the group carries the name and the value, which is the button the reader chose.
+    /// </summary>
+    public static void WriteRadioGroup(PdfWriter writer, int id, IReadOnlyList<FormField> buttons, IReadOnlyList<int> widgetIds)
+    {
+        var o = writer.Out;
+        var first = buttons[0];
+        var chosen = buttons.FirstOrDefault(button => button.Checked);
+
+        writer.BeginObject(id);
+        o.Ascii("<</FT/Btn/T");
+        writer.TextString(first.Name);
+        o.Ascii("/TU");
+        writer.TextString(first.Tooltip ?? first.Name);
+
+        // Radio (bit 16) and, with it, the rule that one of the buttons is always chosen (bit 15).
+        var flags = (1 << 15) | (1 << 14);
+        if (first.ReadOnly)
+            flags |= 1;
+        if (first.Required)
+            flags |= 2;
+
+        o.Ascii("/Ff ").Int(flags).Ascii("/V/").Ascii(chosen != null ? Name(chosen.Export ?? "On") : "Off")
+            .Ascii("/DV/").Ascii(chosen != null ? Name(chosen.Export ?? "On") : "Off").Ascii("/Kids[");
+
+        foreach (var widget in widgetIds)
+            o.Int(widget).Ascii(" 0 R ");
+
+        o.Ascii("]>>");
+        writer.EndObject();
+    }
+
+    /// <summary>
+    /// A name as PDF writes one: the characters that are not allowed in one are written as their code.
+    /// </summary>
+    private static string Name(string text)
+    {
+        var builder = new System.Text.StringBuilder(text.Length);
+        foreach (var b in System.Text.Encoding.UTF8.GetBytes(text))
+        {
+            if (b is (>= (byte)'A' and <= (byte)'Z') or (>= (byte)'a' and <= (byte)'z') or (>= (byte)'0' and <= (byte)'9') or (byte)'_' or (byte)'-')
+                builder.Append((char)b);
+            else
+                builder.Append('#').Append(b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        return builder.Length > 0 ? builder.ToString() : "On";
     }
 
     /// <summary>The text state a viewer sets before it draws the value of a field.</summary>
@@ -180,22 +266,32 @@ internal static class FormWriter
         var width = field.Width;
         var height = field.Height;
 
+        var button = field.Kind is FormFieldKind.Checkbox or FormFieldKind.Radio;
+        var round = field.Kind == FormFieldKind.Radio;
+
         using var content = new ByteBuffer(256);
         var o = content;
 
-        if (field.Kind != FormFieldKind.Checkbox)
+        if (!button)
             o.Ascii("/Tx BMC\n");
 
         o.Ascii("q\n");
 
         if (field.BackgroundColor is { } background)
         {
-            WriteColor(o, background).Ascii(" rg 0 0 ").Real(width).Space().Real(height).Ascii(" re f\n");
+            WriteColor(o, background);
+            if (round)
+                Circle(o, width / 2, height / 2, Math.Min(width, height) / 2).Ascii(" rg f\n");
+            else
+                o.Ascii(" rg 0 0 ").Real(width).Space().Real(height).Ascii(" re f\n");
         }
 
         // The frame sits inside the box, so that a one point line is not cut in half by its edge.
-        WriteColor(o, field.BorderColor).Ascii(" RG 1 w 0.5 0.5 ")
-            .Real(width - 1).Space().Real(height - 1).Ascii(" re S\n");
+        WriteColor(o, field.BorderColor).Ascii(" RG 1 w ");
+        if (round)
+            Circle(o, width / 2, height / 2, (Math.Min(width, height) - 1) / 2).Ascii(" S\n");
+        else
+            o.Ascii("0.5 0.5 ").Real(width - 1).Space().Real(height - 1).Ascii(" re S\n");
 
         switch (field.Kind)
         {
@@ -203,7 +299,16 @@ internal static class FormWriter
                 WriteTick(o, style.Color, width, height);
                 break;
 
-            case FormFieldKind.Checkbox:
+            case FormFieldKind.Radio when ticked:
+                WriteColor(o, style.Color);
+                Circle(o, width / 2, height / 2, Math.Min(width, height) / 4).Ascii(" rg f\n");
+                break;
+
+            case FormFieldKind.Checkbox or FormFieldKind.Radio:
+                break;
+
+            case FormFieldKind.Signature:
+                WriteSignatureLine(o, field, width, height);
                 break;
 
             default:
@@ -212,7 +317,7 @@ internal static class FormWriter
         }
 
         o.Ascii("Q\n");
-        if (field.Kind != FormFieldKind.Checkbox)
+        if (!button)
             o.Ascii("EMC\n");
 
         var data = content.Span;
@@ -223,6 +328,30 @@ internal static class FormWriter
             b => b.Ascii("/Type/XObject/Subtype/Form/Resources ").Int(resourcesId).Ascii(" 0 R/BBox[0 0 ")
                 .Real(width).Space().Real(height).Ascii("]"),
             flateEncoded: compressed != null);
+    }
+
+    /// <summary>A circle drawn as four Bézier curves, which is as close to one as a PDF path gets.</summary>
+    private static ByteBuffer Circle(ByteBuffer o, float x, float y, float radius)
+    {
+        const float k = 0.5522847f;
+        var c = radius * k;
+        o.Real(x + radius).Space().Real(y).Ascii(" m ");
+        o.Real(x + radius).Space().Real(y + c).Space().Real(x + c).Space().Real(y + radius).Space().Real(x).Space().Real(y + radius).Ascii(" c ");
+        o.Real(x - c).Space().Real(y + radius).Space().Real(x - radius).Space().Real(y + c).Space().Real(x - radius).Space().Real(y).Ascii(" c ");
+        o.Real(x - radius).Space().Real(y - c).Space().Real(x - c).Space().Real(y - radius).Space().Real(x).Space().Real(y - radius).Ascii(" c ");
+        o.Real(x + c).Space().Real(y - radius).Space().Real(x + radius).Space().Real(y - c).Space().Real(x + radius).Space().Real(y).Ascii(" c h");
+        return o;
+    }
+
+    /// <summary>The line a signature is written on, with what it is for beneath it.</summary>
+    private static void WriteSignatureLine(ByteBuffer o, FormField field, float width, float height)
+    {
+        var style = field.Style!;
+        WriteColor(o, field.BorderColor).Ascii(" RG 0.75 w ")
+            .Real(width * 0.08f).Space().Real(height * 0.32f).Ascii(" m ")
+            .Real(width * 0.92f).Space().Real(height * 0.32f).Ascii(" l S\n");
+
+        _ = style;
     }
 
     /// <summary>The mark of a ticked box: two strokes, as a pen would leave them.</summary>

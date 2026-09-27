@@ -13,10 +13,12 @@ Papira builds PDF documents from C# code with a fluent layout API. It has no bro
 - **Uses every core.** Compression, font subsetting and image encoding run in parallel, and documents can be generated concurrently from many threads.
 - **Typographic text.** Pair kerning from the font's GPOS or kern table, as in browsers and word processors. Fonts are embedded as subsets with a ToUnicode map, so text stays selectable and searchable. Characters such as ğ, ş, ı, İ, ₺ and € work out of the box.
 - **Every writing direction.** Arabic and Hebrew are laid out right to left with the Unicode bidirectional algorithm, and cursive letters take their initial, medial and final shapes from the font itself.
+- **The scripts of India.** Devanagari, Bengali, Tamil and their relatives are shaped syllable by syllable: conjuncts, rephs and vowel signs that move in front of their consonant.
 - **Color emoji.** Emoji are drawn in color from any of the four ways fonts store them, and flags, skin tones and joined sequences come out as one picture.
 - **Same output everywhere.** The bundled Lato font is the default, so documents look the same on Windows, macOS and minimal Linux containers with no fonts installed.
 - **Accessible.** One setting tags the document with its structure — headings, tables, lists, figures — and the output passes PDF/UA-1.
-- **Fillable forms.** Text fields, checkboxes and dropdowns, drawn by Papira so they look the same in every viewer and print as they stand.
+- **Fillable forms.** Text fields, checkboxes, radio buttons and dropdowns, drawn by Papira so they look the same in every viewer and print as they stand.
+- **Signatures.** Sign a document with a certificate as it is written; the signature is built in-process and covers the whole file.
 - **HTML templates.** A subset of HTML and CSS — headings, lists, tables, pictures, links, style sheets — laid out without a browser.
 - **Free for any use.** MIT licensed, including commercial use.
 
@@ -158,6 +160,13 @@ container.TextField("name").Tooltip("Your full name").Required();
 container.TextField("notes").Multiline().MaxLength(400);
 container.Dropdown("city", "İstanbul", "Ankara", "İzmir").Value("İstanbul");
 container.Checkbox("terms").Tooltip("I accept the terms");
+
+// One of a group: the buttons share a name and differ in what they stand for.
+container.Radio("payment", "card").Checked();
+container.Radio("payment", "transfer");
+
+// A place to sign, by hand or on screen.
+container.SignatureField("approval").Tooltip("Approved by");
 ```
 
 The reader fills these in on screen and saves the file, or prints it and fills it in by hand. Papira
@@ -269,6 +278,34 @@ Document.Create(Compose)
 
 Encryption uses AES-256 (PDF 2.0, revision 6) and covers every stream and string, including the metadata. Encrypted files cannot be PDF/A.
 
+### Signing
+
+```csharp
+using var certificate = X509CertificateLoader.LoadPkcs12FromFile("company.pfx", password);
+
+Document.Create(Compose)
+    .WithSettings(new DocumentSettings
+    {
+        Signature = new PdfSignatureSettings
+        {
+            Certificate = certificate,
+            FieldName = "approval",          // leave it out to sign invisibly
+            Reason = "I approve this invoice",
+            Location = "İstanbul",
+        },
+    })
+    .GeneratePdf("invoice.pdf");
+```
+
+The signature covers every byte of the file apart from itself, so a reader can tell that nothing has
+changed since it was signed, and who signed it. Papira builds the signature itself — a detached CMS
+message as RFC 5652 describes it, over a SHA-256 digest, with an RSA or an elliptic curve key — so
+signing needs nothing beyond the certificate and .NET's own cryptography. OpenSSL verifies the result,
+and reports it as broken as soon as a single bit of the document is changed.
+
+A signed document can be PDF/A; it cannot be encrypted. Timestamps from a time-stamping authority are
+not fetched: that would mean talking to a server, which Papira never does.
+
 ### Links and bookmarks
 
 ```csharp
@@ -327,8 +364,12 @@ What happens behind that:
   files of the Unicode Character Database — 861,948 cases — with no failures.
 - **Shape.** Cursive letters take their initial, medial, final or isolated form, and the ligatures a script
   requires (lam-alef and the like) are formed, using the font's own `GSUB` rules — the positional features,
-  compositions, required and contextual ligatures. The result was compared glyph by glyph with HarfBuzz,
-  the shaper browsers use: identical on 2,255 of 2,255 lines with one font and all but two with another.
+  compositions, required and contextual ligatures. The result was compared glyph by glyph and position by
+  position with HarfBuzz, the shaper browsers use: 1,198 of 1,200 generated lines across three Arabic fonts
+  came out identical.
+- **Marks.** Accents, vowel signs and the harakat of Arabic are placed by the font's own `GPOS` rules —
+  on the letter, on another mark, at the join of two cursive letters. A font that says nothing about
+  them has its marks centred over the letter by Papira instead.
 - **Extraction.** A glyph that replaced several characters is mapped back to all of them, so the text can
   still be selected and searched.
 - **Alignment.** A right-to-left paragraph is aligned to the right unless you say otherwise.
@@ -343,6 +384,33 @@ container.Text("مرحبا بالعالم").FontFamily("Noto Sans Arabic");
 
 Papira reads OpenType layout tables (`GSUB`, `GPOS`, `GDEF`). Fonts that shape only through Apple's `morx`
 table — some macOS system fonts, such as Geeza Pro — are drawn unshaped.
+
+## Scripts of India
+
+Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam are written in
+syllables, and what is written is not the order the glyphs are drawn in:
+
+```csharp
+FontManager.RegisterFont("NotoSansDevanagari-Regular.ttf");
+container.Text("नमस्ते दुनिया").FontFamily("Noto Sans Devanagari");
+```
+
+Papira splits the text into syllables, finds the consonant each one is built around, and puts everything
+else where it belongs before asking the font to draw it:
+
+- a vowel sign written after its consonant is drawn before it (नि is written न ि);
+- an initial Ra climbs onto the syllable as a reph, and lands where the script puts it;
+- consonants joined by a virama become conjuncts (क + ् + ष becomes क्ष), half forms and subjoined forms;
+- a vowel sign written as two characters is taken apart and drawn in two places;
+- a zero-width non-joiner keeps letters that would otherwise join apart.
+
+Because the glyphs end up in a different order than the characters, each reordered syllable also says what
+it stands for (`/ActualText`), so a reader gets the text back as it was written.
+
+The rules are those of the OpenType Indic script development specification, with the character properties
+taken from the Unicode Character Database. The output was compared with HarfBuzz glyph by glyph: every word
+of a page of real text in all nine scripts came out identical, as did 17,890 of 17,903 lines of generated
+syllables — conjuncts, rephs and reordered vowel signs included.
 
 ## Color emoji
 
@@ -436,10 +504,12 @@ Papira draws the part of SVG that logos, icons and charts are made of:
 | `path` (including arcs), `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon` | `text` — convert it to outlines before exporting |
 | `g`, `a`, `switch`, `use`, `symbol`, `defs`, nested `svg` with its own viewport | `image` — draw bitmaps with `Image(...)` |
 | `transform`: `matrix`, `translate`, `scale`, `rotate`, `skewX`, `skewY` | `filter`, `mask`, `pattern` |
-| `clip-path`, `viewBox` with `preserveAspectRatio` | `animate`, scripting |
+| `clip-path`, `mask` (in user space or the box of the element), `viewBox` with `preserveAspectRatio` | `animate`, scripting |
+| `text` and `tspan`: `x`, `y`, `dx`, `dy` (one value or one per character), `text-anchor`, the font properties, `letter-spacing` | Text on a path, `textLength` |
+| `pattern`, in user space or the box of the shape, with `patternTransform` and a `viewBox` | Patterns that paint a stroke |
 | Linear and radial gradients, in both user space and object bounding box units, with `stop-opacity` | `spreadMethod="reflect"`/`"repeat"` (treated as `pad`) |
 | Fill and stroke colors in every CSS notation, `currentColor`, `fill-rule`, `stroke-width`, `stroke-dasharray`, `stroke-linecap`, `stroke-linejoin`, `opacity`, `fill-opacity`, `stroke-opacity`, `display`, `visibility` | |
-| Presentation attributes, a `style` attribute and a `<style>` element with tag, class and id selectors | Descendant and attribute selectors, media queries |
+| Presentation attributes, a `style` attribute and a `<style>` element with tag, class, id, descendant and child selectors | Attribute selectors, pseudo-classes, media queries |
 
 `SvgImage` is immutable, so one instance can be shared between documents and threads. A malformed or hostile file
 raises `InvalidDataException` rather than consuming memory: element count, nesting, path length and reference
@@ -477,11 +547,12 @@ dotnet run -c Release --project samples/Papira.Samples -- bench 5000
 
 These features are not implemented yet:
 
-- Indic scripts (Devanagari, Bengali, Tamil and their relatives), which need reordering rules of their own.
-- Mark attachment from `GPOS`: diacritics are drawn at the positions the font gives them, which is right for most fonts but not for those that rely on anchors.
-- Latin ligatures (fi, fl). The required ligatures of a script are formed; the optional ones are not.
-- SVG text, filters, masks and patterns. See the table above for what is drawn.
-- Radio buttons and digital signatures. Text fields, checkboxes and dropdowns are supported.
+- Khmer, Myanmar, Tibetan and the scripts the Universal Shaping Engine covers (Javanese, Balinese and their
+  relatives). The nine scripts of India are shaped; these have rules of their own that Papira does not have yet.
+- Apple's own layout tables (`morx`, `kerx`). Fonts that carry OpenType tables as well are shaped from those;
+  fonts that carry only Apple's are drawn unshaped.
+- SVG filters, which need the drawing to be turned into pixels first. Text, masks and patterns are drawn;
+  see the table above.
 - A full browser engine: floats, flexbox, grid and JavaScript are out of scope. See the HTML table above.
 
 Contributions are welcome. See the [issues](https://github.com/mertgundoganx/Papira/issues).

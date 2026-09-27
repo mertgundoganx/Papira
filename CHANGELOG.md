@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 from 1.0 on, the public API only changes in a way that breaks code in a major version.
 
+## [1.1.0] - 2026-09-27
+
+### Added
+
+- The scripts of India: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. Text is split into syllables, the base consonant of each one is found and everything else is placed relative to it — conjuncts and half forms, an initial Ra that becomes a reph, vowel signs that are drawn before the consonant they are written after, and two-part vowel signs that are drawn in two places. A reordered syllable also says what it stands for (`/ActualText`), so the text still reads back as it was written. Compared with HarfBuzz glyph by glyph: every word of a page of real text in all nine scripts is identical, as are 17,890 of 17,903 lines of generated syllables.
+- Mark attachment from the font's `GPOS` table: accents on their letters, marks on marks, the harakat of Arabic, and the joins of a cursive script (lookup types 1–9, with the context rules). Across 172 fonts of Latin text with accents and every Arabic and Hebrew font of a machine, Papira's positions agree with HarfBuzz's. A font that positions no marks itself has them centred over the letter by Papira instead.
+- Accented text is drawn with the single glyph a font keeps for it where there is one, and with the letter and the mark where there is not — both ways round, as a browser does it.
+- The ligatures a font offers of its own accord (fi, fl and the like), left out again when the letters are spaced apart.
+- Signing (`DocumentSettings.Signature`): the document is signed with a certificate as it is written, with a detached CMS message Papira builds itself (RFC 5652, SHA-256, RSA or elliptic curve). OpenSSL verifies the result and reports it as broken as soon as a bit of the document changes. A signed document can be PDF/A.
+- Radio buttons (`Radio`) and places to sign (`SignatureField`) in forms.
+- SVG text (`text`, `tspan`, with the positions given one value or one per character, `text-anchor`, the font properties and letter spacing), masks (`mask`) and patterns (`pattern`, in user space or the box of the shape, with a transform and a view box).
+- Style sheets understand descendant and child selectors, in SVG as well as in HTML.
+
+### Fixed
+
+- Text with a letter spacing no longer forms the ligatures that would undo it, which is what browsers do.
+- A style sheet rule of one feature could be applied in place of another's: the plan of a script was cached by the script alone, so the same font shaped differently depending on what had been drawn before it.
+
 ## [1.0.0] - 2026-09-27
 
 ### Added
@@ -74,6 +92,7 @@ First public release.
 - Deterministic output: identical input (with a fixed `CreationDate`) produces byte-identical files.
 - Hardened parsing of untrusted fonts and images: size limits, bounded decompression and validation of all offsets.
 
+[1.1.0]: https://github.com/mertgundoganx/Papira/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mertgundoganx/Papira/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/mertgundoganx/Papira/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mertgundoganx/Papira/releases/tag/v0.1.0

@@ -99,6 +99,73 @@ public class FormTests
         float.Parse(match.Groups[group].Value, System.Globalization.CultureInfo.InvariantCulture);
 
     [Fact]
+    public void The_buttons_of_a_radio_group_are_one_field_with_a_widget_each()
+    {
+        var pdf = Form(c => c.Column(column =>
+        {
+            column.Item().Radio("payment", "card").Tooltip("Kredi kartı");
+            column.Item().Radio("payment", "transfer").Checked().Tooltip("Havale");
+            column.Item().Radio("payment", "cash").Tooltip("Nakit");
+        }));
+
+        // One field holds the group; the three buttons are its widgets.
+        Assert.Equal(3, Regex.Count(pdf.Raw, "/Subtype/Widget"));
+        Assert.Single(Regex.Matches(pdf.Raw, @"/FT/Btn/T<"));
+        Assert.Contains("/Kids[", pdf.Raw);
+
+        // Radio (bit 16) and one button always chosen (bit 15).
+        Assert.Contains("/Ff 49152", pdf.Raw);
+        Assert.Contains("/V/transfer", pdf.Raw);
+        Assert.Equal(1, Regex.Count(pdf.Raw, @"/AS/transfer"));
+        Assert.Equal(2, Regex.Count(pdf.Raw, @"/AS/Off"));
+    }
+
+    [Fact]
+    public void A_button_of_a_group_is_drawn_as_a_circle()
+    {
+        var pdf = Form(c => c.Radio("payment", "card").Checked());
+        var appearances = pdf.Streams().Where(s => s.Contains(" c ")).ToList();
+
+        // A ring, and the dot inside it that says this is the one.
+        Assert.NotEmpty(appearances);
+        Assert.Contains(appearances, a => a.Contains(" S") && a.Contains(" rg"));
+    }
+
+    [Fact]
+    public void Two_buttons_of_a_group_cannot_stand_for_the_same_thing()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => Generate(c => c.Column(column =>
+        {
+            column.Item().Radio("payment", "card");
+            column.Item().Radio("payment", "card");
+        })));
+
+        Assert.Contains("stand for 'card'", exception.Message);
+    }
+
+    [Fact]
+    public void A_radio_group_cannot_share_its_name_with_another_field()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => Generate(c => c.Column(column =>
+        {
+            column.Item().TextField("payment");
+            column.Item().Radio("payment", "card");
+        })));
+
+        Assert.Contains("name of both a radio group and another field", exception.Message);
+    }
+
+    [Fact]
+    public void A_place_for_a_signature_is_a_field_of_its_own()
+    {
+        var pdf = Form(c => c.SignatureField("imza").Tooltip("Yetkili imzası"));
+
+        Assert.Contains("/FT/Sig", pdf.Raw);
+        Assert.Contains("/SigFlags 3", pdf.Raw);
+        Assert.Contains("Yetkili imzası", pdf.ExtractStrings());
+    }
+
+    [Fact]
     public void A_dropdown_offers_its_options()
     {
         var pdf = Form(c => c.Dropdown("country", "Türkiye", "Deutschland").Value("Türkiye"));

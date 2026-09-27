@@ -27,6 +27,7 @@ public static class FeaturesDocument
         var webp = Image.FromFile(Asset("circle-alpha.webp"));
         var logo = SvgImage.FromFile(Asset("logo.svg"));
         FontManager.RegisterFont(Asset("NotoSansArabic-subset.ttf"));
+        FontManager.RegisterFontWithCustomName("Noto Sans Devanagari", Asset("NotoSansDevanagari-subset.ttf"));
 
         return Document.Create(document =>
         {
@@ -223,7 +224,15 @@ public static class FeaturesDocument
                         }
                     });
 
-                    column.Item().EnsureSpace(150).Bookmark("10. Doldurulabilir form").Text("10. Doldurulabilir form").FontSize(14).Bold();
+                    column.Item().EnsureSpace(120).Bookmark("10. Hint yazı sistemleri").Text("10. Hint yazı sistemleri").FontSize(14).Bold();
+                    column.Item().Text(
+                        "Devanagari, Bengalce, Tamilce ve akrabaları hecelerle yazılır: yazılan sıra ile çizilen sıra " +
+                        "aynı değildir. Ünlü işareti ünsüzünden sonra yazılıp önüne çizilir, baştaki ra hecenin üstüne " +
+                        "çıkar, ünsüzler birleşir.");
+                    column.Item().PaddingTop(4).Text("नमस्ते दुनिया — भारत एक विशाल देश है जहाँ अनेक भाषाएँ बोली जाती हैं।")
+                        .FontFamily("Noto Sans Devanagari").FontSize(15);
+
+                    column.Item().EnsureSpace(150).Bookmark("11. Doldurulabilir form").Text("11. Doldurulabilir form").FontSize(14).Bold();
                     column.Item().Text("Aşağıdaki alanlar ekranda doldurulabilir; yazdırıldığında da olduğu gibi çıkar.");
                     column.Item().Text("Ad ve soyad").FontSize(9).FontColor(Colors.Grey.Darken2);
                     column.Item().TextField("ad").Tooltip("Ad ve soyadınız");

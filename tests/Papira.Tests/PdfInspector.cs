@@ -98,10 +98,60 @@ internal sealed partial class PdfInspector
     }
 
     /// <summary>
-    /// Text of every glyph run (one line per run), decoded through the ToUnicode maps.
-    /// Intended for single-font documents: glyph ids of different fonts are not distinguished.
+    /// Text of every glyph run (one line per run), decoded through the ToUnicode maps. Where the
+    /// document says what a piece of drawing stands for (<c>/ActualText</c>, which the scripts that
+    /// reorder their syllables need), that is what a reader is given instead of the glyphs.
     /// </summary>
-    public string ExtractText() => string.Concat(TextRuns().Select(run => run.Text + "\n"));
+    public string ExtractText()
+    {
+        var map = ToUnicodeMap();
+        var builder = new StringBuilder();
+
+        foreach (var content in PageContents())
+        {
+            var position = 0;
+            while (position < content.Length)
+            {
+                var span = content.IndexOf("/Span<</ActualText<", position, StringComparison.Ordinal);
+                if (span < 0)
+                {
+                    AppendRuns(builder, map, content[position..]);
+                    break;
+                }
+
+                AppendRuns(builder, map, content[position..span]);
+
+                var start = span + "/Span<</ActualText<".Length;
+                var end = content.IndexOf(">>>BDC", start, StringComparison.Ordinal);
+                var close = content.IndexOf("EMC", end, StringComparison.Ordinal);
+                var hex = content[start..end].TrimStart('F', 'E').TrimStart('F', 'E');
+
+                // The text the span stands for, written as UTF-16.
+                for (var i = 0; i + 4 <= hex.Length; i += 4)
+                    builder.Append((char)Convert.ToUInt16(hex.Substring(i, 4), 16));
+
+                builder.Append('\n');
+                position = close < 0 ? content.Length : close + 3;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendRuns(StringBuilder builder, Dictionary<string, string> map, string content)
+    {
+        foreach (Match run in GlyphRunRegex().Matches(content))
+        {
+            foreach (Match segment in HexStringRegex().Matches(run.Groups["glyphs"].Value))
+            {
+                var hex = segment.Groups[1].Value;
+                for (var i = 0; i + 4 <= hex.Length; i += 4)
+                    builder.Append(map.TryGetValue(hex.Substring(i, 4), out var text) ? text : "\uFFFD");
+            }
+
+            builder.Append('\n');
+        }
+    }
 
     /// <summary>Glyph runs with their page index and start position (PDF coordinates), in drawing order.</summary>
     public List<(int Page, float X, float Y, string Text)> TextRuns()

@@ -10,6 +10,8 @@ internal sealed class DocumentResources
     private readonly Dictionary<float, string> _opacities = [];
     private readonly List<(string Name, Shading Shading)> _shadings = [];
     private readonly List<(string Name, Shading Shading, float Width, float Height)> _softMasks = [];
+    private readonly List<MaskForm> _maskForms = [];
+    private readonly List<TilingPattern> _tilings = [];
 
     public IReadOnlyCollection<FontUsage> Fonts => _fonts.Values;
     public IReadOnlyCollection<ImageUsage> Images => _images.Values;
@@ -22,6 +24,31 @@ internal sealed class DocumentResources
 
     /// <summary>Masks that make part of a gradient transparent, with the area each one covers.</summary>
     public IReadOnlyList<(string Name, Shading Shading, float Width, float Height)> SoftMasks => _softMasks;
+
+    /// <summary>Masks drawn from a piece of a drawing: what is light shows through, what is dark hides.</summary>
+    public IReadOnlyList<MaskForm> MaskForms => _maskForms;
+
+    /// <summary>Drawings repeated over and over to fill a shape.</summary>
+    public IReadOnlyList<TilingPattern> Tilings => _tilings;
+
+    /// <summary>
+    /// A graphics state that hides what is drawn wherever the given drawing is dark. The content is a
+    /// finished content stream, in the coordinates of the page.
+    /// </summary>
+    public string GetMaskForm(byte[] content, float left, float bottom, float right, float top)
+    {
+        var name = "GK" + (_maskForms.Count + 1);
+        _maskForms.Add(new MaskForm(name, content, left, bottom, right, top));
+        return name;
+    }
+
+    /// <summary>A pattern: one tile of a drawing, and how often and where it is repeated.</summary>
+    public string GetTiling(byte[] content, float left, float bottom, float right, float top, float xStep, float yStep, Infrastructure.Matrix matrix)
+    {
+        var name = "Pt" + (_tilings.Count + 1);
+        _tilings.Add(new TilingPattern(name, content, left, bottom, right, top, xStep, yStep, matrix));
+        return name;
+    }
 
     public string GetOpacity(float alpha)
     {
@@ -64,6 +91,21 @@ internal sealed class DocumentResources
         return usage;
     }
 }
+
+/// <summary>A mask drawn from part of a drawing, with the area it covers on the page.</summary>
+internal sealed record MaskForm(string Name, byte[] Content, float Left, float Bottom, float Right, float Top);
+
+/// <summary>One tile of a pattern, with how far apart the copies stand and where they start.</summary>
+internal sealed record TilingPattern(
+    string Name,
+    byte[] Content,
+    float Left,
+    float Bottom,
+    float Right,
+    float Top,
+    float XStep,
+    float YStep,
+    Infrastructure.Matrix Matrix);
 
 internal sealed class FontUsage(TrueTypeFont font, string name)
 {

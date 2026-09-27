@@ -39,6 +39,12 @@ public sealed record DocumentSettings
     /// <summary>Password protection and permissions. Cannot be combined with <see cref="PdfStandard"/>.</summary>
     public PdfEncryptionSettings? Encryption { get; init; }
 
+    /// <summary>
+    /// Signs the document with a certificate as it is written, so that a reader can tell that nothing
+    /// in it has changed since. Cannot be combined with <see cref="Encryption"/>.
+    /// </summary>
+    public PdfSignatureSettings? Signature { get; init; }
+
     /// <summary>Compression of page content and embedded fonts. Default: <see cref="PdfCompression.Optimal"/>.</summary>
     public PdfCompression Compression { get; init; } = PdfCompression.Optimal;
 
