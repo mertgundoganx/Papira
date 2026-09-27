@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 from 1.0 on, the public API only changes in a way that breaks code in a major version.
 
-## [1.1.0] - 2026-09-27
+## [1.1.1] - 2026-09-27
 
 ### Added
 
@@ -23,6 +23,10 @@ from 1.0 on, the public API only changes in a way that breaks code in a major ve
 
 - Text with a letter spacing no longer forms the ligatures that would undo it, which is what browsers do.
 - A style sheet rule of one feature could be applied in place of another's: the plan of a script was cached by the script alone, so the same font shaped differently depending on what had been drawn before it.
+
+## 1.1.0 - withdrawn
+
+The package published under this version was built from the 1.0.0 commit by mistake. It is unlisted on NuGet and its tag was removed; 1.1.1 is the release these changes were meant to be.
 
 ## [1.0.0] - 2026-09-27
 
@@ -92,7 +96,7 @@ First public release.
 - Deterministic output: identical input (with a fixed `CreationDate`) produces byte-identical files.
 - Hardened parsing of untrusted fonts and images: size limits, bounded decompression and validation of all offsets.
 
-[1.1.0]: https://github.com/mertgundoganx/Papira/compare/v1.0.0...v1.1.0
+[1.1.1]: https://github.com/mertgundoganx/Papira/compare/v1.0.0...v1.1.1
 [1.0.0]: https://github.com/mertgundoganx/Papira/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/mertgundoganx/Papira/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mertgundoganx/Papira/releases/tag/v0.1.0
