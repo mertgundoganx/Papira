@@ -14,6 +14,30 @@ internal sealed class HtmlNode
 
     public List<HtmlNode> Children { get; } = [];
 
+    /// <summary>
+    /// The element as it was written, for the elements Papira does not read as markup — a drawing, whose
+    /// own language tells capital letters from small ones where markup does not.
+    /// </summary>
+    public string? Raw { get; set; }
+
+    /// <summary>The element this one stands in, so that a rule can ask where among the others it stands.</summary>
+    public HtmlNode? Parent { get; set; }
+
+    /// <summary>Which element of its parent this is, counting from one, and how many there are in all.</summary>
+    public int Index { get; set; }
+
+    public int SiblingCount { get; set; }
+
+    /// <summary>True once the children of this element have been counted.</summary>
+    public bool Numbered { get; set; }
+
+    /// <summary>Adds a child and remembers where it was added, which a selector may ask about.</summary>
+    public void Add(HtmlNode child)
+    {
+        child.Parent = this;
+        Children.Add(child);
+    }
+
     public bool IsText => Tag.Length == 0;
 
     public static HtmlNode Element(string tag) => new() { Tag = tag };

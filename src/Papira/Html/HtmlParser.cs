@@ -99,6 +99,7 @@ internal static class HtmlParser
                 continue;
             }
 
+            var start = i;
             var tag = ReadName(html, i + 1, out var attributeStart);
             var element = HtmlNode.Element(tag);
             i = ReadAttributes(html, attributeStart, element, out var selfClosing);
@@ -107,13 +108,21 @@ internal static class HtmlParser
                 throw new InvalidDataException($"The HTML has more than {MaxNodes} elements.");
 
             ImplicitClose(open, tag);
-            open[^1].Children.Add(element);
+            open[^1].Add(element);
+
+            // A drawing is its own language, and a case-sensitive one: it is kept as it was written and
+            // read by the part of Papira that draws such things, rather than taken apart as markup.
+            if (tag == "svg" && !selfClosing)
+            {
+                element.Raw = ReadDrawing(html, start, ref i);
+                continue;
+            }
 
             if (RawText.Contains(tag))
             {
                 var text = ReadRawText(html, ref i, tag);
                 if (tag is not ("script" or "textarea"))
-                    element.Children.Add(HtmlNode.TextNode(text));
+                    element.Add(HtmlNode.TextNode(text));
 
                 continue;
             }
@@ -130,6 +139,45 @@ internal static class HtmlParser
         return root;
     }
 
+    /// <summary>
+    /// The whole of a drawing as it was written, from its opening tag to the matching closing one. A
+    /// drawing may hold drawings of its own, so the tags are counted rather than only looked for.
+    /// </summary>
+    private static string ReadDrawing(string html, int start, ref int i)
+    {
+        var depth = 1;
+        var at = i;
+
+        while (at < html.Length && depth > 0)
+        {
+            var next = html.IndexOf('<', at);
+            if (next < 0)
+                break;
+
+            if (next + 1 < html.Length && html[next + 1] == '/')
+            {
+                if (string.Equals(ReadName(html, next + 2, out _), "svg", StringComparison.Ordinal))
+                    depth--;
+
+                if (depth == 0)
+                {
+                    at = SkipToEnd(html, next);
+                    break;
+                }
+            }
+            else if (string.Equals(ReadName(html, next + 1, out _), "svg", StringComparison.Ordinal))
+            {
+                depth++;
+            }
+
+            at = next + 1;
+        }
+
+        var end = Math.Min(at, html.Length);
+        i = end;
+        return html[start..end];
+    }
+
     private static void AddText(HtmlNode parent, string text, ref int nodes)
     {
         if (text.Length == 0)
@@ -138,7 +186,7 @@ internal static class HtmlParser
         if (++nodes > MaxNodes)
             throw new InvalidDataException($"The HTML has more than {MaxNodes} elements.");
 
-        parent.Children.Add(HtmlNode.TextNode(Decode(text)));
+        parent.Add(HtmlNode.TextNode(Decode(text)));
     }
 
     private static bool Skip(string html, ref int i, string opening, string closing)

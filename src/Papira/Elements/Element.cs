@@ -18,6 +18,12 @@ internal abstract class Element
     internal virtual void Reset()
     {
     }
+
+    /// <summary>
+    /// How far below the top of the element the baseline of its first line of text sits, or null when it
+    /// has no text to line up on. This is what <c>align-items: baseline</c> lines items up on.
+    /// </summary>
+    internal virtual float? FirstBaseline(Size available, LayoutContext context) => null;
 }
 
 internal sealed class EmptyElement : Element
@@ -52,6 +58,8 @@ internal abstract class ContainerElement : Element, IContainer
     internal override void Draw(Size available, LayoutContext context) => Child.Draw(available, context);
 
     internal override void Reset() => Child.Reset();
+
+    internal override float? FirstBaseline(Size available, LayoutContext context) => Child.FirstBaseline(available, context);
 
     /// <summary>Draws the child translated by the given offset.</summary>
     protected void DrawChildAt(float x, float y, Size size, LayoutContext context)

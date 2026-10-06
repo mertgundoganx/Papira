@@ -68,6 +68,12 @@ internal sealed class LayoutContext(Canvas canvas)
     /// <summary>Height of the content area (between header and footer) of the current page.</summary>
     public float BodyHeight { get; set; } = float.MaxValue;
 
+    /// <summary>
+    /// The size of the whole page, which is what the viewport units of a style sheet refer to. In print
+    /// a browser measures <c>vh</c> against the page box, not against a window.
+    /// </summary>
+    public Infrastructure.Size Viewport { get; set; } = new(595.28f, 841.89f);
+
     /// <summary>Link areas of the page being laid out; collected by the renderer after each page.</summary>
     public List<LinkArea> PageLinks { get; } = [];
 

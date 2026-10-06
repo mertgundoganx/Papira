@@ -102,6 +102,7 @@ internal static class DocumentRenderer
         {
             var pageStyle = page.Style.InheritFrom(documentStyle);
             var (width, height) = (page.PageSize.Width, page.PageSize.Height);
+            context.Viewport = new Size(width, height);
             var contentWidth = width - page.LeftMargin - page.RightMargin;
             var contentHeight = height - page.TopMargin - page.BottomMargin;
             if (contentWidth <= 0 || contentHeight <= 0)

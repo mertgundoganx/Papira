@@ -31,6 +31,38 @@ internal sealed class ResolvedTextStyle
         LineHeight = style.LineHeightFactor is { } factor
             ? Size * factor
             : (font.Ascender - font.Descender + font.LineGap) * Scale;
+        Features = ParseFeatures(style.Features);
+    }
+
+    /// <summary>
+    /// The features the style asks the font for, by their four-letter names. A number or "on"/"off" after
+    /// a name says whether it is wanted, as <c>font-feature-settings</c> writes it.
+    /// </summary>
+    private static uint[]? ParseFeatures(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var tags = new List<uint>(4);
+        foreach (var part in text.Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var token = part.Trim('"', '\'');
+            if (token is "0" or "off")
+            {
+                if (tags.Count > 0)
+                    tags.RemoveAt(tags.Count - 1);
+
+                continue;
+            }
+
+            if (token is "1" or "on")
+                continue;
+
+            if (token.Length == 4 && token.All(char.IsAsciiLetterOrDigit))
+                tags.Add(Papira.Fonts.TrueTypeFont.Tag(token));
+        }
+
+        return tags.Count > 0 ? [.. tags] : null;
     }
 
     public ResolvedFont Font { get; }
@@ -43,6 +75,9 @@ internal sealed class ResolvedTextStyle
     public float Ascent { get; }
     public float Descent { get; }
     public float LineHeight { get; }
+
+    /// <summary>The features the font is asked for beyond the ones every text gets, or null for none.</summary>
+    public uint[]? Features { get; }
 }
 
 internal sealed class TextSpan
@@ -135,6 +170,13 @@ internal sealed class TextElement : Element
 
     // Line breaking results for the text starting at _linesStart.
     private readonly List<Line> _lines = [];
+    /// <summary>
+    /// Whether the space the text ends with is drawn. A space at the end of a line is normally dropped,
+    /// so that it neither widens the line nor pushes centred text off centre; where a box follows the
+    /// text in the same line, that space stands between the two and is kept.
+    /// </summary>
+    public bool KeepTrailingSpace;
+
     private float _linesWidth = -1;
     private int _linesStart = -1;
 
@@ -245,6 +287,10 @@ internal sealed class TextElement : Element
                 }
             }
 
+            // A character no font of the document can draw is left out; see Append.
+            if (glyph == 0 && codepoint != '\n')
+                continue;
+
             if (styleIndex != runStyle)
             {
                 ApplyKerning(runStart, _length);
@@ -292,6 +338,10 @@ internal sealed class TextElement : Element
             _fallbacks.Add(null);
             _spanOfStyle.Add(s);
             _lastSpanStyle = primary;
+
+            // Only the shaper can ask the font for features, so text that wants them is shaped even
+            // where it is plain enough to be drawn as it is written.
+            _hasComplexScript |= _styles[primary].Features != null;
 
             foreach (var rune in texts[s].EnumerateRunes())
             {
@@ -394,8 +444,9 @@ internal sealed class TextElement : Element
 
         // Text of no particular script, running left to right, is drawn as it is written: one glyph per
         // character, with the glyph the font manager already found. A font that draws pictures composes
-        // them from several characters, so its text goes through the shaper as a cursive script does.
-        if (script == 0 && !rightToLeft && font.Colors.IsEmpty && !RunNeedsShaping(start, end))
+        // them from several characters, so its text goes through the shaper as a cursive script does —
+        // and so does text that asks the font for features of its own, which only the shaper applies.
+        if (script == 0 && !rightToLeft && font.Colors.IsEmpty && style.Features == null && !RunNeedsShaping(start, end))
         {
             for (var i = start; i < end; i++)
             {
@@ -406,7 +457,7 @@ internal sealed class TextElement : Element
         else
         {
             _buffer ??= new ShapingBuffer();
-            TextShaper.Shape(font, _text.AsSpan(start, end - start), script, rightToLeft, _buffer, ligatures: style.LetterSpacing == 0);
+            TextShaper.Shape(font, _text.AsSpan(start, end - start), script, rightToLeft, _buffer, style.LetterSpacing == 0, style.Features);
 
             foreach (var shaped in _buffer.Glyphs)
             {
@@ -465,6 +516,12 @@ internal sealed class TextElement : Element
 
     private void Append(ushort glyph, int cluster, int clusterLength, int styleIndex, byte level, float advance, float offsetX = 0, float offsetY = 0)
     {
+        // No font of the document has a glyph for this character. Drawing the one a font keeps for what it
+        // cannot draw would leave the reader a blank — and a file that is not accessible, because that
+        // glyph stands for no character at all — so the character is left out instead.
+        if (glyph == 0 && _text[cluster] != '\n')
+            return;
+
         if (_length == _glyphs.Length)
             GrowGlyphs(_length + 1);
 
@@ -630,7 +687,8 @@ internal sealed class TextElement : Element
             }
 
             var end = i;
-            while (end > start && _codepoints[end - 1] == ' ')
+            var keep = KeepTrailingSpace && i >= _length;
+            while (end > start && _codepoints[end - 1] == ' ' && !keep)
                 end--;
 
             if (hardBreak)
@@ -721,6 +779,20 @@ internal sealed class TextElement : Element
             return SpacePlan.Wrap;
 
         return count == _lines.Count ? SpacePlan.Full(width, height) : SpacePlan.Partial(width, height);
+    }
+
+    internal override float? FirstBaseline(Size available, LayoutContext context)
+    {
+        if (Spans.Count == 0 || _done)
+            return null;
+
+        EnsureShaped(context);
+        EnsureLines(available.Width);
+        if (_lines.Count == 0)
+            return null;
+
+        var line = _lines[0];
+        return (line.Height - line.Ascent - line.Descent) / 2 + line.Ascent;
     }
 
     internal override void Draw(Size available, LayoutContext context)

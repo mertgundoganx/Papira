@@ -29,6 +29,7 @@ public sealed record TextStyle
     internal float? Spacing { get; init; }
     internal bool? IsUnderline { get; init; }
     internal bool? IsStrikethrough { get; init; }
+    internal string? Features { get; init; }
 
     /// <summary>A style with nothing set; everything is inherited.</summary>
     public static TextStyle Default { get; } = new();
@@ -67,6 +68,13 @@ public sealed record TextStyle
     /// <summary>Line height as a multiple of the font size. When unset, the font's natural line spacing is used.</summary>
     public TextStyle LineHeight(float factor) => this with { LineHeightFactor = factor };
 
+    /// <summary>
+    /// Asks the font for the features named, by their four-letter OpenType names, separated by spaces or
+    /// commas: <c>"tnum"</c> for figures of equal width, <c>"zero"</c> for a slashed zero, <c>"smcp"</c>
+    /// for small capitals. A font that does not offer one simply does not apply it.
+    /// </summary>
+    public TextStyle FontFeatures(string? features) => this with { Features = features };
+
     /// <summary>Additional space between characters, in points.</summary>
     public TextStyle LetterSpacing(float points) => this with { Spacing = points };
 
@@ -91,6 +99,7 @@ public sealed record TextStyle
             Spacing = Spacing ?? parent.Spacing,
             IsUnderline = IsUnderline ?? parent.IsUnderline,
             IsStrikethrough = IsStrikethrough ?? parent.IsStrikethrough,
+            Features = Features ?? parent.Features,
         };
     }
 }

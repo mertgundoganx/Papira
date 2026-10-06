@@ -10,18 +10,24 @@ namespace Papira.Html;
 /// paragraphs, tables become tables. It is a document formatter, not a browser engine — there are no
 /// floats, no flexbox and no absolute positioning — but it lays out the markup templates are written in.
 /// </summary>
-internal sealed class HtmlComposer(HtmlOptions options)
+internal sealed partial class HtmlComposer(HtmlOptions options)
 {
     /// <summary>Elements that start a block of their own rather than flowing with the text.</summary>
     private static readonly HashSet<string> BlockTags = new(StringComparer.Ordinal)
     {
         "address", "article", "aside", "blockquote", "center", "dd", "div", "dl", "dt", "fieldset", "figcaption",
-        "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "img", "li", "main", "nav",
+        "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav",
         "ol", "p", "pre", "section", "table", "ul",
     };
 
     private readonly StyleSheet _sheet = new();
     private readonly List<StyleTarget> _path = [];
+
+    /// <summary>The boxes an element placed against its container may be placed against, innermost last.</summary>
+    private readonly List<AnchoredElement> _anchors = [];
+
+    /// <summary>The elements that have already been given what a rule puts before or after them.</summary>
+    private readonly HashSet<HtmlNode> _generated = [];
 
     public void Compose(IContainer container, HtmlNode root)
     {
@@ -29,6 +35,9 @@ internal sealed class HtmlComposer(HtmlOptions options)
             _sheet.Add(css);
 
         CollectStyles(root);
+
+        if (options.Remote is { } remote)
+            remote.Fetch(Sources(root));
 
         var body = Find(root, "body") ?? root;
         var style = new HtmlStyle
@@ -38,7 +47,21 @@ internal sealed class HtmlComposer(HtmlOptions options)
             Family = options.FontFamily,
         };
 
-        Blocks(container, body, style);
+        // The document and its body are elements like any other: what they say about the text is passed
+        // down to everything, and the margin a browser gives the body is the margin of the whole page.
+        if (Find(root, "html") is { } document)
+        {
+            Push(document);
+            style = Inherit(style, Declarations(document), document);
+        }
+
+        Push(body);
+        var declarations = Declarations(body);
+        style = Inherit(style, declarations, body);
+
+        var anchor = new AnchoredElement();
+        _anchors.Add(anchor);
+        Blocks(Decorate(container, Box(declarations, style, body)).Assign(anchor), body, style);
     }
 
     private void CollectStyles(HtmlNode node)
@@ -56,6 +79,41 @@ internal sealed class HtmlComposer(HtmlOptions options)
 
         foreach (var child in node.Children)
             CollectStyles(child);
+    }
+
+    /// <summary>Every picture the document points at, so that they can all be fetched at once.</summary>
+    private static List<string> Sources(HtmlNode node)
+    {
+        var sources = new List<string>();
+        Collect(node);
+        return sources;
+
+        void Collect(HtmlNode current)
+        {
+            if (current.Tag == "img" && current.Attribute("src") is { Length: > 0 } source)
+                sources.Add(source);
+
+            foreach (var child in current.Children)
+                Collect(child);
+        }
+    }
+
+    /// <summary>
+    /// Whether the element stands for the page number or for how many pages there are. These are the
+    /// names a browser's own print templates use, so a footer written for one reads the same here.
+    /// </summary>
+    private static bool? Counter(HtmlNode node)
+    {
+        foreach (var name in node.Classes)
+        {
+            if (name.Equals("pageNumber", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (name.Equals("totalPages", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return null;
     }
 
     private static HtmlNode? Find(HtmlNode node, string tag)
@@ -97,7 +155,7 @@ internal sealed class HtmlComposer(HtmlOptions options)
                 }
                 else
                 {
-                    Paragraph(column.Item(), group.Inline!, style, heading: 0);
+                    Line(column.Item(), group.Inline!, style);
                     previousMargin = 0;
                 }
             }
@@ -152,7 +210,8 @@ internal sealed class HtmlComposer(HtmlOptions options)
         if (node.IsText)
             return !node.Text.AsSpan().Trim().IsEmpty;
 
-        if (node.Tag is "br" or "img")
+        // A picture or a drawing is something to draw, though it holds no words of its own.
+        if (node.Tag is "br" or "img" or "svg")
             return true;
 
         return node.Children.Exists(HasText);
@@ -163,7 +222,14 @@ internal sealed class HtmlComposer(HtmlOptions options)
         if (node.IsText)
             return false;
 
-        if (Declaration(node, "display") is { } display)
+        var declarations = StyleOf(node);
+
+        // An element placed against its container is a block of its own, whatever it would otherwise be:
+        // it is taken out of the flow, and only a block can be.
+        if (declarations.GetValueOrDefault("position") is "absolute" or "fixed")
+            return true;
+
+        if (declarations.GetValueOrDefault("display") is { } display)
         {
             if (display.StartsWith("inline", StringComparison.OrdinalIgnoreCase))
                 return false;
@@ -178,6 +244,42 @@ internal sealed class HtmlComposer(HtmlOptions options)
         return BlockTags.Contains(node.Tag);
     }
 
+    /// <summary>
+    /// True for an element that stands in a line of text and yet draws a box of its own. A picture and a
+    /// drawing are such elements by nature: they sit among the words and keep a size all the same.
+    /// </summary>
+    private bool IsInlineBlock(HtmlNode node)
+    {
+        if (node.IsText)
+            return false;
+
+        if (StyleOf(node).GetValueOrDefault("display") is { } display)
+        {
+            return display.StartsWith("inline-", StringComparison.OrdinalIgnoreCase) ||
+                (node.Tag is "img" or "svg" && !display.StartsWith("block", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return node.Tag is "img" or "svg";
+    }
+
+    /// <summary>Everything that has a say in how an element is laid out, from the element's own place in the document.</summary>
+    private Dictionary<string, string> StyleOf(HtmlNode node)
+    {
+        Push(node);
+        try
+        {
+            return Declarations(node);
+        }
+        finally
+        {
+            Pop();
+        }
+    }
+
+    /// <summary>How an element is displayed, from everything that has a say in it.</summary>
+    private string? Display(HtmlNode node) =>
+        node.IsText ? null : StyleOf(node).GetValueOrDefault("display");
+
     /// <summary>A declaration of the style attribute, which is enough to tell how an element is displayed.</summary>
     private static string? Declaration(HtmlNode node, string property) =>
         node.Attribute("style") is { Length: > 0 } inline && StyleSheet.ParseDeclarations(inline).TryGetValue(property, out var value)
@@ -191,7 +293,7 @@ internal sealed class HtmlComposer(HtmlOptions options)
         try
         {
             var declarations = Declarations(node);
-            var style = Inherit(parent, declarations);
+            var style = Inherit(parent, declarations, node);
             var box = Box(declarations, style, node);
             if (box.Hidden)
                 return previousMargin;
@@ -200,54 +302,22 @@ internal sealed class HtmlComposer(HtmlOptions options)
             if (node.Tag is "ul" or "ol" && _path.Exists(ancestor => ancestor.Tag == "li"))
                 box = box with { Margin = new Edges(box.Margin.Left, 0, box.Margin.Right, 0) };
 
+            // An element placed against its container is taken out of the flow: it leaves no space where
+            // it was written, and is drawn over the box it belongs to.
+            if (box.Absolute && _anchors.Count > 0)
+            {
+                var anchored = new AnchoredChild { Left = box.Left, Top = box.Top, Right = box.Right, Bottom = box.Bottom };
+                _anchors[^1].Children.Add(anchored);
+                Fill(anchored, node, style, box, declarations);
+                return previousMargin;
+            }
+
             if (box.BreakBefore)
                 column.Item().PageBreak();
 
             // What the block above already left behind is taken off this block's own top margin.
             box = box with { Margin = box.Margin with { Top = Math.Max(0, box.Margin.Top - previousMargin) } };
-            var container = Decorate(column.Item(), box);
-
-            // An element with an id is where a link to "#id" jumps to.
-            if (node.Attribute("id") is { Length: > 0 } id)
-                container = container.Section(id);
-
-            switch (node.Tag)
-            {
-                case "table":
-                    Table(container, node, style);
-                    break;
-
-                case "ul" or "ol":
-                    List(container, node, style, numbered: node.Tag == "ol");
-                    break;
-
-                case "img":
-                    Picture(container, node, style);
-                    break;
-
-                case "hr":
-                    container.LineHorizontal(box.Border.Top > 0 ? box.Border.Top : 0.75f).LineColor(box.BorderColor);
-                    break;
-
-                case "pre":
-                    Preformatted(container, node, style);
-                    break;
-
-                case "a" when Link(node) is { } link:
-                    var linked = link.Section != null ? container.SectionLink(link.Section) : container.Hyperlink(link.Uri!);
-                    style.LinkUri = null;
-                    style.LinkSection = null;
-                    Blocks(linked, node, style);
-                    break;
-
-                case "h1" or "h2" or "h3" or "h4" or "h5" or "h6" when !node.Children.Exists(IsBlock):
-                    Paragraph(container, node.Children, style, node.Tag[1] - '0');
-                    break;
-
-                default:
-                    Blocks(container, node, style);
-                    break;
-            }
+            Fill(column.Item(), node, style, box, declarations);
 
             if (box.BreakAfter)
                 column.Item().PageBreak();
@@ -260,15 +330,116 @@ internal sealed class HtmlComposer(HtmlOptions options)
         }
     }
 
+    /// <summary>
+    /// Draws the box of an element into the place it was given and lays out what it holds. An element that
+    /// others are placed against becomes the box they are placed against while its own content is read.
+    /// </summary>
+    private void Fill(IContainer slot, HtmlNode node, HtmlStyle style, in HtmlBox box, Dictionary<string, string> declarations)
+    {
+        var anchor = box.Positioned ? new AnchoredElement() : null;
+        var container = Decorate(slot, box, anchor);
+
+        // An element with an id is where a link to "#id" jumps to.
+        if (node.Attribute("id") is { Length: > 0 } id)
+            container = container.Section(id);
+
+        if (anchor != null)
+            _anchors.Add(anchor);
+
+        try
+        {
+            Content(container, node, style, box, declarations);
+        }
+        finally
+        {
+            if (anchor != null)
+                _anchors.RemoveAt(_anchors.Count - 1);
+        }
+    }
+
+    /// <summary>
+    /// What the element holds, once the box around it has been drawn. How the children are laid out is the
+    /// element's own business: most stack, a flexible box lines them up, a grid puts them in tracks.
+    /// </summary>
+    private void Content(IContainer container, HtmlNode node, HtmlStyle style, in HtmlBox box, Dictionary<string, string> declarations)
+    {
+        var display = declarations.GetValueOrDefault("display");
+        if (display is "flex" or "inline-flex")
+        {
+            Flex(container, node, style, declarations, box);
+            return;
+        }
+
+        if (display is "grid" or "inline-grid")
+        {
+            Grid(container, node, style, declarations);
+            return;
+        }
+
+        if (Counter(node) is { } total && !node.Children.Exists(HasText))
+        {
+            container.Text(text => new InlineWriter(text).Counter(total, style));
+            return;
+        }
+
+        switch (node.Tag)
+        {
+            case "table":
+                Table(container, node, style);
+                break;
+
+            case "ul" or "ol":
+                List(container, node, style, numbered: node.Tag == "ol");
+                break;
+
+            case "img":
+                Picture(container, node, style);
+                break;
+
+            case "svg" when node.Raw is { Length: > 0 } markup:
+                Drawing(container, markup, style, declarations);
+                break;
+
+            case "hr":
+                container.LineHorizontal(box.Border.Top > 0 ? box.Border.Top : 0.75f).LineColor(box.BorderColor);
+                break;
+
+            case "pre":
+                Preformatted(container, node, style);
+                break;
+
+            case "a" when Link(node) is { } link:
+                var linked = link.Section != null ? container.SectionLink(link.Section) : container.Hyperlink(link.Uri!);
+                style.LinkUri = null;
+                style.LinkSection = null;
+                Blocks(linked, node, style);
+                break;
+
+            case "h1" or "h2" or "h3" or "h4" or "h5" or "h6" when !node.Children.Exists(IsBlock):
+                Paragraph(container, node.Children, style, node.Tag[1] - '0');
+                break;
+
+            default:
+                Blocks(container, node, style);
+                break;
+        }
+    }
+
     /// <summary>Wraps the content in what the box around it says: margins, a background, borders, padding.</summary>
-    private static IContainer Decorate(IContainer container, in HtmlBox box)
+    private static IContainer Decorate(IContainer container, in HtmlBox box, AnchoredElement? anchor = null)
     {
         if (box.Margin.Any)
-            container = container.Padding(box.Margin.Left, box.Margin.Top, box.Margin.Right, box.Margin.Bottom);
+        {
+            container = container
+                .Padding(box.Margin.Left, box.Margin.Top, box.Margin.Right, box.Margin.Bottom)
+                .PadAtTheEnds();
+        }
 
-        if (box.Width is { } width)
-            container = container.Width(width);
+        if (box.Scale is { } scale)
+            container = container.Scale(scale.X, scale.Y);
 
+        // Where the box stands in the space it was given is settled before how wide it is, so that a box
+        // narrower than that space can be centred in it.
         container = box.Align switch
         {
             HorizontalAlignment.Center => container.AlignCenter(),
@@ -276,28 +447,73 @@ internal sealed class HtmlComposer(HtmlOptions options)
             _ => container,
         };
 
+        container = Sizing(container, box);
+
         if (box.KeepTogether)
             container = container.ShowEntire();
+
+        if (box.CornerRadius > 0)
+            container = container.CornerRadius(box.CornerRadius);
 
         if (box.Background is { } background)
             container = container.Background(background);
 
         if (box.Border.Any)
+        {
             container = container.Border(box.Border.Left, box.Border.Top, box.Border.Right, box.Border.Bottom)
                 .BorderColor(box.BorderColor);
+        }
 
-        if (box.Padding.Any)
-            container = container.Padding(box.Padding.Left, box.Padding.Top, box.Padding.Right, box.Padding.Bottom);
+        // What is placed against this box is placed against the inside of its border, padding included,
+        // which is the box CSS measures such offsets from.
+        if (anchor != null)
+            container = container.Assign(anchor);
 
-        if (box.Height is { } height)
-            container = container.Height(height);
+        // A border stands between the box and what it holds, so it takes room of its own; the padding
+        // stands inside it. The two are one inset, which is why they are added together.
+        var inset = new Edges(
+            box.Border.Left + box.Padding.Left,
+            box.Border.Top + box.Padding.Top,
+            box.Border.Right + box.Padding.Right,
+            box.Border.Bottom + box.Padding.Bottom);
+
+        if (inset.Any)
+            container = container.Padding(inset.Left, inset.Top, inset.Right, inset.Bottom).PadAtTheEnds();
 
         return container;
     }
 
+    /// <summary>
+    /// What the element says about its own size. A width stands for both a smallest and a largest size, and
+    /// is itself held inside <c>max-width</c> where there is one, as CSS resolves the three against each other.
+    /// </summary>
+    private static IContainer Sizing(IContainer container, in HtmlBox box) =>
+        box.Width == null && box.Height == null && box.MinWidth == null && box.MaxWidth == null &&
+        box.MinHeight == null && box.MaxHeight == null
+            ? container
+            : container.Constrain(box.Width, box.MinWidth, box.MaxWidth, box.Height, box.MinHeight, box.MaxHeight);
+
     // ---- text ----
 
-    private void Paragraph(IContainer container, List<HtmlNode> nodes, HtmlStyle style, int heading)
+    /// <summary>
+    /// A run of text between two blocks. Where it holds nothing but words it is a paragraph; where boxes
+    /// of its own stand among the words — a picture, an inline-block — it is laid out as a line of them.
+    /// </summary>
+    private void Line(IContainer container, List<HtmlNode> nodes, HtmlStyle style)
+    {
+        if (nodes.Exists(IsInlineBlock))
+            InlineBlocks(container, nodes, style);
+        else
+            Paragraph(container, nodes, style, heading: 0);
+    }
+
+    private void Paragraph(
+        IContainer container,
+        List<HtmlNode> nodes,
+        HtmlStyle style,
+        int heading,
+        bool keepLeadingSpace = false,
+        bool keepTrailingSpace = false)
     {
         container.Text(text =>
         {
@@ -315,9 +531,15 @@ internal sealed class HtmlComposer(HtmlOptions options)
             if (heading > 0)
                 text.Heading(heading);
 
-            var writer = new InlineWriter(text);
+            var writer = new InlineWriter(text, keepLeadingSpace);
             foreach (var node in nodes)
                 Inline(node, style, writer);
+
+            if (keepTrailingSpace)
+            {
+                writer.FlushSpace();
+                text.KeepTrailingSpace();
+            }
         });
     }
 
@@ -336,9 +558,15 @@ internal sealed class HtmlComposer(HtmlOptions options)
         try
         {
             var declarations = Declarations(node);
-            var style = Inherit(parent, declarations);
+            var style = Inherit(parent, declarations, node);
             if (declarations.TryGetValue("display", out var display) && display == "none")
                 return;
+
+            if (Counter(node) is { } total && !node.Children.Exists(HasText))
+            {
+                writer.Counter(total, style);
+                return;
+            }
 
             switch (node.Tag)
             {
@@ -386,15 +614,21 @@ internal sealed class HtmlComposer(HtmlOptions options)
     /// Writes the text of a paragraph, collapsing runs of spaces and line breaks into single spaces the
     /// way a browser does, so that markup indented for reading does not come out full of gaps.
     /// </summary>
-    private sealed class InlineWriter(TextDescriptor text)
+    private sealed class InlineWriter(TextDescriptor text, bool following = false)
     {
         private readonly StringBuilder _builder = new();
         private HtmlStyle? _spaceStyle;
         private bool _pendingSpace;
-        private bool _any;
+
+        /// <summary>
+        /// Whether anything has been written yet. Text that follows a box in the same line starts as if
+        /// it had, so that the space it begins with is drawn rather than dropped as a line's own would be.
+        /// </summary>
+        private bool _any = following;
 
         public void Write(string raw, HtmlStyle style)
         {
+            raw = Transform(raw, style);
             if (style.Preformatted)
             {
                 Add(raw, style);
@@ -436,6 +670,64 @@ internal sealed class HtmlComposer(HtmlOptions options)
 
             if (_builder.Length > 0)
                 Add(_builder.ToString(), style);
+        }
+
+        /// <summary>
+        /// Writes the space the text ended with. A space at the end of a line is not drawn, but one
+        /// between a word and the box that follows it is, so a run that something follows keeps it.
+        /// </summary>
+        public void FlushSpace()
+        {
+            if (!_pendingSpace || _spaceStyle == null)
+                return;
+
+            _pendingSpace = false;
+            Add(" ", _spaceStyle);
+        }
+
+        /// <summary>Writes the number of the page this text ends up on, or how many pages there are.</summary>
+        public void Counter(bool total, HtmlStyle style)
+        {
+            if (_pendingSpace)
+            {
+                _pendingSpace = false;
+                Add(" ", _spaceStyle ?? style);
+            }
+
+            var span = total ? text.TotalPages() : text.CurrentPageNumber();
+            span.Style(style.ToTextStyle());
+            _any = true;
+        }
+
+        /// <summary>
+        /// The text as it is drawn: a style sheet may ask for capital letters where small ones are
+        /// written, which is what <c>text-transform</c> says.
+        /// </summary>
+        private static string Transform(string text, HtmlStyle style)
+        {
+            var culture = style.Language ?? CultureInfo.InvariantCulture;
+            return style.Transform switch
+            {
+                "uppercase" => text.ToUpper(culture),
+                "lowercase" => text.ToLower(culture),
+                "capitalize" => Capitalize(text, culture),
+                _ => text,
+            };
+        }
+
+        private static string Capitalize(string text, CultureInfo culture)
+        {
+            var letters = text.ToCharArray();
+            var start = true;
+            for (var i = 0; i < letters.Length; i++)
+            {
+                if (start && char.IsLetter(letters[i]))
+                    letters[i] = char.ToUpper(letters[i], culture);
+
+                start = !char.IsLetter(letters[i]) && letters[i] != '\'';
+            }
+
+            return new string(letters);
         }
 
         public void Break()
@@ -589,27 +881,89 @@ internal sealed class HtmlComposer(HtmlOptions options)
             return;
 
         var declarations = Declarations(node);
-        var width = HtmlValues.Length(declarations.GetValueOrDefault("width") ?? node.Attribute("width"), style.FontSize);
-        var height = HtmlValues.Length(declarations.GetValueOrDefault("height") ?? node.Attribute("height"), style.FontSize);
 
-        if (width is { } w)
-            container = container.Width(w);
-        if (height is { } h)
-            container = container.Height(h);
+        // The width and height attributes belong to the picture itself; what a style sheet says about its
+        // size is part of its box and has already been applied around it.
+        var width = HtmlValues.Measure(node.Attribute("width"), style.FontSize);
+        var height = HtmlValues.Measure(node.Attribute("height"), style.FontSize);
+        var hasWidth = width != null || Stated("width");
+        var hasHeight = height != null || Stated("height");
+
+        var drawing = options.LoadSvg(source);
+        var image = drawing == null ? options.LoadImage(source) : null;
+
+        // A picture that was to be fetched and did not arrive leaves its place empty rather than the
+        // document unwritten.
+        if (drawing == null && image == null)
+            return;
+
+        if (width != null || height != null)
+        {
+            container = container.Constrain(width: width, height: height);
+        }
+        else if (!hasWidth && !hasHeight)
+        {
+            // Told nothing about its size, a picture is drawn at its own, in the pixels it was made of —
+            // and shrunk to the page where it is wider than the room it has, as a browser prints it.
+            var pixels = drawing is { } vector ? vector.Width : image!.Width;
+            container = container.Constrain(maxWidth: CssLength.FromPoints(pixels * 0.75f));
+        }
+
+        var fit = declarations.GetValueOrDefault("object-fit");
+        var scaling = fit switch
+        {
+            "contain" or "scale-down" => ImageScaling.FitArea,
+            "cover" when hasWidth && hasHeight => ImageScaling.Cover,
+
+            // A picture told how wide and how tall it is fills exactly that box, as a browser draws it.
+            _ when hasWidth && hasHeight => ImageScaling.Stretch,
+            _ when hasHeight => ImageScaling.FitHeight,
+            _ => ImageScaling.FitWidth,
+        };
 
         var alt = node.Attribute("alt");
-        if (options.LoadSvg(source) is { } drawing)
-        {
-            var svg = container.Svg(drawing);
-            if (!string.IsNullOrEmpty(alt))
-                svg.Alt(alt);
 
+        // A picture given an empty description says so: it is decoration, and a reader for the blind is
+        // meant to pass over it. That is what HTML means by alt="".
+        if (alt is { Length: 0 })
+            container = container.Decoration();
+
+        if (drawing != null)
+        {
+            var svg = container.Assign(new SvgElement(drawing));
+            svg.Scaling = scaling;
+            svg.Alt = alt;
             return;
         }
 
-        var picture = container.Image(options.LoadImage(source));
-        if (!string.IsNullOrEmpty(alt))
-            picture.Alt(alt);
+        var picture = container.Assign(new ImageElement(image!));
+        picture.Scaling = scaling;
+        picture.Alt = alt;
+
+        bool Stated(string property) => HtmlValues.Measure(declarations.GetValueOrDefault(property), style.FontSize) != null;
+    }
+
+    /// <summary>A drawing written out in the markup itself, drawn at the size it states.</summary>
+    private static void Drawing(IContainer container, string markup, HtmlStyle style, Dictionary<string, string> declarations)
+    {
+        SvgImage drawing;
+        try
+        {
+            drawing = SvgImage.FromString(markup);
+        }
+        catch (InvalidDataException)
+        {
+            // A drawing Papira cannot read leaves its place empty rather than the document unwritten.
+            return;
+        }
+
+        var stated = HtmlValues.Measure(declarations.GetValueOrDefault("width"), style.FontSize) != null ||
+            HtmlValues.Measure(declarations.GetValueOrDefault("height"), style.FontSize) != null;
+
+        if (!stated)
+            container = container.Constrain(maxWidth: CssLength.FromPoints(drawing.Width * 0.75f));
+
+        container.Assign(new SvgElement(drawing));
     }
 
     // ---- tables ----
@@ -636,19 +990,31 @@ internal sealed class HtmlComposer(HtmlOptions options)
         var widths = ColumnWidths(node, header.Concat(body).Select(row => row.Node).FirstOrDefault(), columns, style);
         var cellPadding = HtmlValues.Length(node.Attribute("cellpadding"), style.FontSize);
         var defaultBorder = HtmlValues.Length(node.Attribute("border"), style.FontSize) ?? 0;
+        var stretch = Declarations(node).ContainsKey("width") || node.Attribute("width") != null;
 
         container.Table(table =>
         {
             table.ColumnsDefinition(definition =>
             {
-                foreach (var (constant, value) in widths)
+                foreach (var (kind, value) in widths)
                 {
-                    if (constant)
-                        definition.ConstantColumn(value);
-                    else
-                        definition.RelativeColumn(value);
+                    switch (kind)
+                    {
+                        case TableColumnKind.Constant:
+                            definition.ConstantColumn(value);
+                            break;
+                        case TableColumnKind.Relative:
+                            definition.RelativeColumn(value);
+                            break;
+                        default:
+                            definition.AutoColumn();
+                            break;
+                    }
                 }
             });
+
+            // A table told how wide it is fills that width; one told nothing is as wide as its columns need.
+            table.Stretch(stretch);
 
             if (header.Count > 0)
             {
@@ -660,19 +1026,33 @@ internal sealed class HtmlComposer(HtmlOptions options)
         });
     }
 
-    private static void CollectRows(HtmlNode node, List<Row> header, List<Row> body)
+    private void CollectRows(HtmlNode node, List<Row> header, List<Row> body)
     {
         foreach (var child in node.Children)
         {
-            switch (child.Tag)
+            // A section of a table is what its tag says, unless a style sheet makes it another: a group
+            // of rows told to be the head of the table is repeated at the top of every page, as a
+            // <thead> is. Only a display that names a part of a table may say so.
+            var declared = Display(child);
+            var section = declared != null && declared.StartsWith("table-", StringComparison.Ordinal)
+                ? declared
+                : child.Tag switch
+                {
+                    "thead" => "table-header-group",
+                    "tbody" or "tfoot" => "table-row-group",
+                    "tr" => "table-row",
+                    _ => null,
+                };
+
+            switch (section)
             {
-                case "tr":
+                case "table-row":
                     body.Add(new Row(null, child));
                     break;
-                case "thead":
+                case "table-header-group":
                     header.AddRange(Rows(child));
                     break;
-                case "tbody" or "tfoot":
+                case "table-row-group" or "table-footer-group":
                     body.AddRange(Rows(child));
                     break;
                 default:
@@ -696,7 +1076,7 @@ internal sealed class HtmlComposer(HtmlOptions options)
     /// The columns of the table, taken from its &lt;col&gt; elements or from the widths of the first row.
     /// A column without a width shares what is left over with the others.
     /// </summary>
-    private List<(bool Constant, float Value)> ColumnWidths(HtmlNode table, HtmlNode? firstRow, int columns, HtmlStyle style)
+    private List<(TableColumnKind Kind, float Value)> ColumnWidths(HtmlNode table, HtmlNode? firstRow, int columns, HtmlStyle style)
     {
         var declared = new List<string?>();
         foreach (var child in table.Children)
@@ -710,16 +1090,16 @@ internal sealed class HtmlComposer(HtmlOptions options)
         if (declared.Count == 0 && firstRow != null)
             declared.AddRange(firstRow.Children.Where(IsCell).Select(WidthOf));
 
-        var widths = new List<(bool, float)>(columns);
+        var widths = new List<(TableColumnKind, float)>(columns);
         for (var i = 0; i < columns; i++)
         {
             var text = i < declared.Count ? declared[i] : null;
             if (text != null && text.Contains('%', StringComparison.Ordinal))
-                widths.Add((false, Math.Max(0.01f, HtmlValues.Length(text, style.FontSize, 100) ?? 1)));
+                widths.Add((TableColumnKind.Relative, Math.Max(0.01f, HtmlValues.Length(text, style.FontSize, 100) ?? 1)));
             else if (HtmlValues.Length(text, style.FontSize) is { } points and > 0)
-                widths.Add((true, points));
+                widths.Add((TableColumnKind.Constant, points));
             else
-                widths.Add((false, 1));
+                widths.Add((TableColumnKind.Content, 0));
         }
 
         return widths;
@@ -753,7 +1133,7 @@ internal sealed class HtmlComposer(HtmlOptions options)
             // A row has a style of its own: what it says is inherited by its cells, and the colour
             // behind it is the colour behind every cell that has none.
             var declarations = Declarations(node);
-            var rowStyle = Inherit(style, declarations);
+            var rowStyle = Inherit(style, declarations, node);
             var background = Box(declarations, rowStyle, node).Background;
 
             var column = 0;
@@ -800,7 +1180,7 @@ internal sealed class HtmlComposer(HtmlOptions options)
         try
         {
             var declarations = Declarations(node);
-            var style = Inherit(parent, declarations);
+            var style = Inherit(parent, declarations, node);
             var box = Box(declarations, style, node);
 
             var container = (IContainer)cell;
@@ -812,7 +1192,9 @@ internal sealed class HtmlComposer(HtmlOptions options)
                 container = container.Border(border.Left, border.Top, border.Right, border.Bottom).BorderColor(box.BorderColor);
 
             var padding = box.Padding.Any ? box.Padding : new Edges(cellPadding ?? 2, cellPadding ?? 2, cellPadding ?? 2, cellPadding ?? 2);
-            container = container.Padding(padding.Left, padding.Top, padding.Right, padding.Bottom);
+            container = container
+                .Padding(border.Left + padding.Left, border.Top + padding.Top, border.Right + padding.Right, border.Bottom + padding.Bottom)
+                .PadAtTheEnds();
 
             container = box.Align switch
             {
@@ -831,8 +1213,31 @@ internal sealed class HtmlComposer(HtmlOptions options)
 
     // ---- styles ----
 
-    private void Push(HtmlNode node) =>
-        _path.Add(new StyleTarget(node.Tag, node.Attribute("id"), node.Classes));
+    private void Push(HtmlNode node)
+    {
+        if (node.Parent is { } parent)
+            Number(parent);
+
+        _path.Add(new StyleTarget(node.Tag, node.Attribute("id"), node.Classes, node.Index, node.SiblingCount));
+    }
+
+    /// <summary>Counts the elements of a parent once, so that a rule can ask which of them an element is.</summary>
+    private static void Number(HtmlNode parent)
+    {
+        if (parent.Numbered)
+            return;
+
+        parent.Numbered = true;
+        var count = 0;
+        foreach (var child in parent.Children)
+        {
+            if (!child.IsText)
+                child.Index = ++count;
+        }
+
+        foreach (var child in parent.Children)
+            child.SiblingCount = count;
+    }
 
     private void Pop() => _path.RemoveAt(_path.Count - 1);
 
@@ -848,6 +1253,7 @@ internal sealed class HtmlComposer(HtmlOptions options)
 
         Presentation(node, declarations);
         _sheet.Apply(_path, declarations);
+        Generate(node);
 
         if (node.Attribute("style") is { Length: > 0 } inline)
         {
@@ -856,6 +1262,48 @@ internal sealed class HtmlComposer(HtmlOptions options)
         }
 
         return declarations;
+    }
+
+    /// <summary>
+    /// The text a rule gives the element before or after what it holds, which <c>::before</c> and
+    /// <c>::after</c> state as their <c>content</c>. It becomes text of the element, where a browser
+    /// puts it, so it is styled and laid out with everything else the element holds.
+    /// </summary>
+    private void Generate(HtmlNode node)
+    {
+        if (!_sheet.HasPseudoElements || node.IsText || !_generated.Add(node))
+            return;
+
+        foreach (var pseudo in (string[])["before", "after"])
+        {
+            var declarations = new Dictionary<string, string>(StringComparer.Ordinal);
+            _sheet.Apply(_path, declarations, pseudo);
+            if (Generated(declarations.GetValueOrDefault("content"), node) is not { Length: > 0 } text)
+                continue;
+
+            var generated = HtmlNode.TextNode(text);
+            generated.Parent = node;
+            if (pseudo == "before")
+                node.Children.Insert(0, generated);
+            else
+                node.Children.Add(generated);
+        }
+    }
+
+    /// <summary>What a <c>content</c> declaration stands for: a piece of text, or an attribute's value.</summary>
+    private static string? Generated(string? content, HtmlNode node)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return null;
+
+        content = content.Trim();
+        if (content.Length >= 2 && (content[0] == '"' || content[0] == '\'') && content[^1] == content[0])
+            return content[1..^1].Replace("\\A", "\n", StringComparison.Ordinal);
+
+        if (content.StartsWith("attr(", StringComparison.OrdinalIgnoreCase) && content.EndsWith(')'))
+            return node.Attribute(content[5..^1].Trim().ToLowerInvariant()) ?? string.Empty;
+
+        return null;
     }
 
     /// <summary>The attributes older markup carries its presentation in.</summary>
@@ -890,9 +1338,12 @@ internal sealed class HtmlComposer(HtmlOptions options)
     }
 
     /// <summary>The style an element passes on, which is its parent's with what it declares itself on top.</summary>
-    private static HtmlStyle Inherit(HtmlStyle parent, Dictionary<string, string> declarations)
+    private static HtmlStyle Inherit(HtmlStyle parent, Dictionary<string, string> declarations, HtmlNode? node = null)
     {
         var style = parent.Clone();
+
+        if (node?.Attribute("lang") is { Length: > 0 } language && Culture(language) is { } culture)
+            style.Language = culture;
 
         if (declarations.TryGetValue("font-size", out var size))
             style.FontSize = FontSize(size, parent.FontSize, ref style);
@@ -925,13 +1376,41 @@ internal sealed class HtmlComposer(HtmlOptions options)
         if (declarations.TryGetValue("text-align", out var align) && HtmlValues.Align(align) is { } alignment)
             style.Align = alignment;
 
+        if (declarations.TryGetValue("text-transform", out var transform))
+            style.Transform = transform.ToLowerInvariant();
+
         if (declarations.TryGetValue("white-space", out var whiteSpace))
             style.Preformatted = whiteSpace is "pre" or "pre-wrap" or "break-spaces";
 
         if (declarations.TryGetValue("list-style-type", out var listStyle))
             style.ListStyle = listStyle;
 
+        // What the text asks the font for may be written out in names or in four-letter tags, and the two
+        // add up: a paragraph may ask for figures of equal width and for a stylistic set at the same time.
+        foreach (var property in (string[])["font-variant", "font-variant-numeric", "font-variant-caps", "font-feature-settings"])
+        {
+            if (!declarations.TryGetValue(property, out var value))
+                continue;
+
+            var asked = property == "font-feature-settings" ? value : HtmlValues.Variants(value);
+            if (asked != null)
+                style.Features = style.Features is { Length: > 0 } already ? already + " " + asked : asked;
+        }
+
         return style;
+    }
+
+    /// <summary>The language a <c>lang</c> names, or null where it names none Papira knows.</summary>
+    private static CultureInfo? Culture(string language)
+    {
+        try
+        {
+            return CultureInfo.GetCultureInfo(language.Trim());
+        }
+        catch (CultureNotFoundException)
+        {
+            return null;
+        }
     }
 
     private static float FontSize(string text, float parent, ref HtmlStyle style)
@@ -980,31 +1459,49 @@ internal sealed class HtmlComposer(HtmlOptions options)
                 ? HtmlValues.Color(shorthand)
                 : null;
 
-        var width = declarations.TryGetValue("width", out var widthText) && !widthText.Contains('%', StringComparison.Ordinal)
-            ? HtmlValues.Length(widthText, size)
-            : null;
+        // Which edges a size covers: by default a width is the width of the content, and the padding and
+        // the border stand outside it; "border-box" counts them as part of it, as most templates ask.
+        var borderBox = declarations.GetValueOrDefault("box-sizing") == "border-box";
+        var around = borderBox
+            ? (Width: 0f, Height: 0f)
+            : (Width: padding.Left + padding.Right + border.Left + border.Right,
+                Height: padding.Top + padding.Bottom + border.Top + border.Bottom);
 
-        var height = declarations.TryGetValue("height", out var heightText) && !heightText.Contains('%', StringComparison.Ordinal)
-            ? HtmlValues.Length(heightText, size)
-            : null;
+        var width = Measure("width", around.Width);
+        var height = Measure("height", around.Height);
+        var maxWidth = Measure("max-width", around.Width);
 
+        // A box with a width and nothing but room on either side stands in the middle of it, which is
+        // what "margin: 0 auto" has always meant.
         HorizontalAlignment? align = null;
-        if (width != null && declarations.GetValueOrDefault("margin-left") == "auto" &&
-            declarations.GetValueOrDefault("margin-right") == "auto")
+        if ((width != null || maxWidth != null) && Centred(declarations))
         {
             align = HorizontalAlignment.Center;
             margin = new Edges(0, margin.Top, 0, margin.Bottom);
         }
 
+        var position = declarations.GetValueOrDefault("position");
         return new HtmlBox
         {
             Margin = margin,
             Padding = padding,
             Border = border,
             BorderColor = borderColor ?? Colors.Grey.Medium,
+            CornerRadius = HtmlValues.Length(declarations.GetValueOrDefault("border-radius")?.Split(' ')[0], size) ?? 0,
             Background = background,
             Width = width,
             Height = height,
+            MinWidth = Measure("min-width", around.Width),
+            MaxWidth = maxWidth,
+            MinHeight = Measure("min-height", around.Height),
+            MaxHeight = Measure("max-height", around.Height),
+            Scale = HtmlValues.Scale(declarations.GetValueOrDefault("transform")),
+            Absolute = position is "absolute" or "fixed",
+            Positioned = position is "relative" or "absolute" or "fixed",
+            Left = Measure("left", 0),
+            Top = Measure("top", 0),
+            Right = Measure("right", 0),
+            Bottom = Measure("bottom", 0),
             Hidden = declarations.GetValueOrDefault("display") == "none" ||
                 declarations.GetValueOrDefault("visibility") == "hidden" ||
                 node.Attributes?.ContainsKey("hidden") == true,
@@ -1014,6 +1511,45 @@ internal sealed class HtmlComposer(HtmlOptions options)
                 declarations.GetValueOrDefault("break-inside") == "avoid",
             Align = align,
         };
+
+        // A size counts the edges around the content where the box model says it does, which is why the
+        // padding and the border are added to what the markup states.
+        CssLength? Measure(string property, float extra) =>
+            HtmlValues.Measure(declarations.GetValueOrDefault(property), size) is { } length
+                ? length + new CssLength(extra)
+                : null;
+    }
+
+    /// <summary>
+    /// Whether the margins on either side of the box are told to take whatever room is left, which centres
+    /// it. They may be written out one at a time or stand in the shorthand, where the sides a list of one
+    /// to four values stands for are the ones CSS says.
+    /// </summary>
+    private static bool Centred(Dictionary<string, string> declarations)
+    {
+        var (left, right) = (Side("margin-left"), Side("margin-right"));
+        if (declarations.TryGetValue("margin", out var shorthand))
+        {
+            var parts = shorthand.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            (string? Left, string? Right) sides = parts.Length switch
+            {
+                1 => (parts[0], parts[0]),
+                2 or 3 => (parts[1], parts[1]),
+                >= 4 => (parts[3], parts[1]),
+                _ => (null, null),
+            };
+
+            left ??= Auto(sides.Left);
+            right ??= Auto(sides.Right);
+        }
+
+        return left == true && right == true;
+
+        bool? Side(string property) =>
+            declarations.TryGetValue(property, out var value) ? Auto(value) : null;
+
+        static bool? Auto(string? value) =>
+            value == null ? null : value.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool Breaks(Dictionary<string, string> declarations, string property) =>

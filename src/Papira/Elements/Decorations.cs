@@ -7,22 +7,61 @@ internal sealed class PaddingElement : ContainerElement
 {
     public float Left, Top, Right, Bottom;
 
-    private Size Inner(Size available) =>
-        new(Math.Max(0, available.Width - Left - Right), Math.Max(0, available.Height - Top - Bottom));
+    /// <summary>
+    /// True where the padding belongs to the box as a whole rather than to each page of it. A box that
+    /// carries on over a page is then padded where it begins and where it ends, and not again at the
+    /// fold, which is how CSS treats the padding of a block that breaks.
+    /// </summary>
+    public bool AtTheEnds;
+
+    private bool _started;
+
+    /// <summary>How much is padded away at the top and at the bottom of the space given on this page.</summary>
+    private (float Top, float Bottom) Edges(Size available, LayoutContext context)
+    {
+        if (!AtTheEnds)
+            return (Top, Bottom);
+
+        var top = _started ? 0 : Top;
+
+        // The padding below the content is only drawn once the content itself has ended.
+        var plan = Child.Measure(new Size(Math.Max(0, available.Width - Left - Right), Math.Max(0, available.Height - top)), context);
+        return (top, plan.Kind == SpacePlanKind.Partial ? 0 : Bottom);
+    }
+
+    private Size Inner(Size available, (float Top, float Bottom) edges) =>
+        new(Math.Max(0, available.Width - Left - Right), Math.Max(0, available.Height - edges.Top - edges.Bottom));
 
     internal override SpacePlan Measure(Size available, LayoutContext context)
     {
-        if (Left + Right > available.Width + Size.Epsilon || Top + Bottom > available.Height + Size.Epsilon)
+        var edges = Edges(available, context);
+        if (Left + Right > available.Width + Size.Epsilon || edges.Top + edges.Bottom > available.Height + Size.Epsilon)
             return SpacePlan.Wrap;
 
-        var plan = Child.Measure(Inner(available), context);
+        var plan = Child.Measure(Inner(available, edges), context);
         return plan.HasContent
-            ? plan with { Width = plan.Width + Left + Right, Height = plan.Height + Top + Bottom }
+            ? plan with { Width = plan.Width + Left + Right, Height = plan.Height + edges.Top + edges.Bottom }
             : plan;
     }
 
-    internal override void Draw(Size available, LayoutContext context) =>
-        DrawChildAt(Left, Top, Inner(available), context);
+    internal override void Draw(Size available, LayoutContext context)
+    {
+        var edges = Edges(available, context);
+        DrawChildAt(Left, edges.Top, Inner(available, edges), context);
+        _started = true;
+    }
+
+    internal override float? FirstBaseline(Size available, LayoutContext context)
+    {
+        var edges = Edges(available, context);
+        return Child.FirstBaseline(Inner(available, edges), context) + edges.Top;
+    }
+
+    internal override void Reset()
+    {
+        _started = false;
+        base.Reset();
+    }
 }
 
 internal sealed class BackgroundElement(Color color) : ContainerElement
@@ -65,36 +104,72 @@ internal sealed class BorderElement : ContainerElement
     }
 }
 
-/// <summary>Min/max width and height constraints. Also used as fixed-size spacer when it has no content.</summary>
+/// <summary>
+/// What an element says about its own size: a size it asks for, and the smallest and largest it may be.
+/// Also used as a fixed-size spacer when it has no content. Any of the three can be a share of the space
+/// the element is offered — what a CSS percentage states — and is then worked out as it is laid out.
+/// </summary>
 internal sealed class ConstrainedElement : ContainerElement
 {
-    public float MinWidth, MinHeight;
-    public float MaxWidth = float.PositiveInfinity, MaxHeight = float.PositiveInfinity;
+    public CssLength? Width, Height, MinWidth, MaxWidth, MinHeight, MaxHeight;
     private bool _drawn;
 
-    private Size Inner(Size available) => new(Math.Min(available.Width, MaxWidth), Math.Min(available.Height, MaxHeight));
+    /// <summary>
+    /// The smallest and largest size the element may take, in points. A size it asks for is held inside
+    /// the largest and then inside the smallest, which is the order CSS resolves the three in.
+    /// </summary>
+    private Limits Resolve(Size available, LayoutContext context)
+    {
+        var viewport = context.Viewport;
+        return new Limits(Axis(Width, MinWidth, MaxWidth, available.Width), Axis(Height, MinHeight, MaxHeight, available.Height));
+
+        (float Min, float Max) Axis(CssLength? preferred, CssLength? smallest, CssLength? largest, float basis)
+        {
+            var min = smallest is { } value ? Math.Max(0, value.Resolve(basis, viewport)) : 0;
+            var max = largest is { } limit ? Math.Max(min, limit.Resolve(basis, viewport)) : float.PositiveInfinity;
+            if (preferred is not { } asked)
+                return (min, max);
+
+            var size = Math.Clamp(Math.Max(0, asked.Resolve(basis, viewport)), min, max);
+            return (size, size);
+        }
+    }
+
+    private readonly record struct Limits((float Min, float Max) Horizontal, (float Min, float Max) Vertical)
+    {
+        public Size Inner(Size available) =>
+            new(Math.Min(available.Width, Horizontal.Max), Math.Min(available.Height, Vertical.Max));
+
+        public bool Sized => Horizontal.Min > 0 || Vertical.Min > 0;
+    }
 
     internal override SpacePlan Measure(Size available, LayoutContext context)
     {
-        if (MinWidth > available.Width + Size.Epsilon || MinHeight > available.Height + Size.Epsilon)
+        var limits = Resolve(available, context);
+        if (limits.Horizontal.Min > available.Width + Size.Epsilon || limits.Vertical.Min > available.Height + Size.Epsilon)
             return SpacePlan.Wrap;
 
-        var plan = Child.Measure(Inner(available), context);
+        var plan = Child.Measure(limits.Inner(available), context);
         if (plan.IsWrap)
             return plan;
 
         if (plan.IsEmpty)
-            return !_drawn && (MinWidth > 0 || MinHeight > 0) ? SpacePlan.Full(MinWidth, MinHeight) : plan;
+            return !_drawn && limits.Sized ? SpacePlan.Full(limits.Horizontal.Min, limits.Vertical.Min) : plan;
 
-        return plan with { Width = Math.Max(plan.Width, MinWidth), Height = Math.Max(plan.Height, MinHeight) };
+        return plan with
+        {
+            Width = Math.Max(plan.Width, limits.Horizontal.Min),
+            Height = Math.Max(plan.Height, limits.Vertical.Min),
+        };
     }
 
     internal override void Draw(Size available, LayoutContext context)
     {
-        var inner = Inner(available);
+        var limits = Resolve(available, context);
+        var inner = limits.Inner(available);
 
         // A fixed-size box without content (e.g. Height(20).Background(...)) still shows its decorations.
-        var isSizedBox = !_drawn && (MinWidth > 0 || MinHeight > 0) && Child.Measure(inner, context).IsEmpty;
+        var isSizedBox = !_drawn && limits.Sized && Child.Measure(inner, context).IsEmpty;
         _drawn = true;
 
         var previous = context.DrawEmptyDecorations;
@@ -102,6 +177,9 @@ internal sealed class ConstrainedElement : ContainerElement
         Child.Draw(inner, context);
         context.DrawEmptyDecorations = previous;
     }
+
+    internal override float? FirstBaseline(Size available, LayoutContext context) =>
+        Child.FirstBaseline(Resolve(available, context).Inner(available), context);
 
     internal override void Reset()
     {
@@ -253,6 +331,42 @@ internal sealed class DefaultTextStyleElement(TextStyle style) : ContainerElemen
         finally
         {
             context.DefaultStyle = parent;
+        }
+    }
+}
+
+/// <summary>
+/// Content that is there to be looked at and not read: a rule, a watermark, a picture that says nothing
+/// the words around it do not already say. It is marked as an artifact of the page, which a reader for
+/// the blind passes over.
+/// </summary>
+internal sealed class DecorationElement : ContainerElement
+{
+    internal override SpacePlan Measure(Size available, LayoutContext context)
+    {
+        var previous = context.Artifact;
+        context.Artifact = true;
+        try
+        {
+            return Child.Measure(available, context);
+        }
+        finally
+        {
+            context.Artifact = previous;
+        }
+    }
+
+    internal override void Draw(Size available, LayoutContext context)
+    {
+        var previous = context.Artifact;
+        context.Artifact = true;
+        try
+        {
+            Child.Draw(available, context);
+        }
+        finally
+        {
+            context.Artifact = previous;
         }
     }
 }

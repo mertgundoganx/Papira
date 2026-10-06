@@ -3,7 +3,12 @@ using Papira.Rendering;
 
 namespace Papira.Elements;
 
-internal readonly record struct TableColumn(bool IsConstant, float Value);
+/// <summary>
+/// How wide a column is: a width of its own, a share of what is left over, or as wide as what it holds.
+/// </summary>
+internal enum TableColumnKind : byte { Constant, Relative, Content }
+
+internal readonly record struct TableColumn(TableColumnKind Kind, float Value);
 
 internal sealed class TableCell : ContainerElement, ITableCellContainer
 {
@@ -32,6 +37,13 @@ internal sealed class TableElement : Element
     private const float Unbounded = 1_000_000;
 
     public readonly List<TableColumn> Columns = [];
+
+    /// <summary>
+    /// True where the table was told how wide it is, so columns as wide as what they hold are stretched to
+    /// fill it. A table told nothing is only as wide as its columns need, as a browser lays one out.
+    /// </summary>
+    public bool Stretch;
+
     public readonly List<TableCell> HeaderCells = [];
     public readonly List<TableCell> Cells = [];
 
@@ -118,7 +130,7 @@ internal sealed class TableElement : Element
         return groups;
     }
 
-    private void EnsureStructure(float width)
+    private void EnsureStructure(float width, LayoutContext context)
     {
         _headerGroups ??= BuildGroups(HeaderCells);
         _groups ??= BuildGroups(Cells);
@@ -130,14 +142,77 @@ internal sealed class TableElement : Element
         float constant = 0, relative = 0;
         foreach (var column in Columns)
         {
-            if (column.IsConstant) constant += column.Value;
-            else relative += column.Value;
+            if (column.Kind == TableColumnKind.Constant)
+                constant += column.Value;
+            else if (column.Kind == TableColumnKind.Relative)
+                relative += column.Value;
         }
 
-        var perUnit = relative > 0 ? Math.Max(0, width - constant) / relative : 0;
+        var content = ContentWidths(width, context, out var contentTotal);
+        var room = Math.Max(0, width - constant);
+
+        // Columns as wide as what they hold take what they need; where that is more than there is, or
+        // where the table was told to fill a width, they are scaled to what is left over.
+        var scale = 1f;
+        if (contentTotal > 0 && (contentTotal > room || (Stretch && relative == 0)))
+            scale = room / contentTotal;
+
+        var taken = constant + (contentTotal * scale);
+        var perUnit = relative > 0 ? Math.Max(0, width - taken) / relative : 0;
+
         _columnX = new float[Columns.Count + 1];
         for (var i = 0; i < Columns.Count; i++)
-            _columnX[i + 1] = _columnX[i] + (Columns[i].IsConstant ? Columns[i].Value : Columns[i].Value * perUnit);
+        {
+            _columnX[i + 1] = _columnX[i] + Columns[i].Kind switch
+            {
+                TableColumnKind.Constant => Columns[i].Value,
+                TableColumnKind.Relative => Columns[i].Value * perUnit,
+                _ => content![i] * scale,
+            };
+        }
+    }
+
+    /// <summary>
+    /// How wide each column would be were it given all the room it wanted: the widest its cells are when
+    /// nothing wraps them. Only the columns that are measured that way are worked out.
+    /// </summary>
+    private float[]? ContentWidths(float width, LayoutContext context, out float total)
+    {
+        total = 0;
+        if (!Columns.Exists(column => column.Kind == TableColumnKind.Content))
+            return null;
+
+        var widths = new float[Columns.Count];
+        Measure(_headerGroups!);
+        Measure(_groups!);
+
+        for (var i = 0; i < widths.Length; i++)
+        {
+            if (Columns[i].Kind != TableColumnKind.Content)
+                continue;
+
+            // A column is never asked to be wider than the table itself.
+            widths[i] = Math.Min(widths[i], width);
+            total += widths[i];
+        }
+
+        return widths;
+
+        void Measure(List<RowGroup> groups)
+        {
+            foreach (var group in groups)
+            {
+                foreach (var cell in group.Cells)
+                {
+                    if (cell.ColumnSpan != 1 || Columns[cell.Column].Kind != TableColumnKind.Content)
+                        continue;
+
+                    var plan = cell.Cell.Measure(new Size(Unbounded, Unbounded), context);
+                    if (plan.HasContent)
+                        widths[cell.Column] = Math.Max(widths[cell.Column], plan.Width);
+                }
+            }
+        }
     }
 
     private float CellWidth(in PlacedCell cell) => _columnX[cell.Column + cell.ColumnSpan] - _columnX[cell.Column];
@@ -300,7 +375,7 @@ internal sealed class TableElement : Element
 
     internal override SpacePlan Measure(Size available, LayoutContext context)
     {
-        EnsureStructure(available.Width);
+        EnsureStructure(available.Width, context);
 
         // A table without body rows still shows its header once.
         if (_groups!.Count == 0)
@@ -350,7 +425,7 @@ internal sealed class TableElement : Element
 
     internal override void Draw(Size available, LayoutContext context)
     {
-        EnsureStructure(available.Width);
+        EnsureStructure(available.Width, context);
         var canvas = context.Canvas;
         using var tag = context.Tag("Table", content: false);
 

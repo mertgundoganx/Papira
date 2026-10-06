@@ -433,7 +433,7 @@ public class HtmlTests
         var exception = Assert.Throws<InvalidOperationException>(() =>
             Generate(c => c.Html("<img src=\"https://example.com/logo.png\">")));
 
-        Assert.Contains("does not fetch anything over the network", exception.Message);
+        Assert.Contains("AllowRemoteImages", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
