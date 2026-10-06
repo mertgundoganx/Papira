@@ -459,7 +459,7 @@ public class HtmlLayoutTests
             "<ul><li>bir</li><li>son</li></ul>");
 
         // Only the last item is drawn with the bold face, so two fonts are embedded.
-        Assert.Equal(2, Regex.Matches(pdf.Raw, "/FontFile2").Count);
+        Assert.Equal(2, Regex.Count(pdf.Raw, "/FontFile2"));
     }
 
     [Fact]
@@ -469,7 +469,7 @@ public class HtmlLayoutTests
             "<style>tr:nth-child(even) td { background: #ff0000 }</style>" +
             "<table><tr><td>bir</td></tr><tr><td>iki</td></tr><tr><td>uc</td></tr><tr><td>dort</td></tr></table>");
 
-        Assert.Equal(2, Regex.Matches(pdf.PageContents()[0], @"1 0 0 rg").Count);
+        Assert.Equal(2, Regex.Count(pdf.PageContents()[0], "1 0 0 rg"));
     }
 
     [Fact]
@@ -479,7 +479,7 @@ public class HtmlLayoutTests
             "<style>p:not(.plain) { color: #ff0000 }</style>" +
             "<p class='plain'>duz</p><p>renkli</p>");
 
-        Assert.Equal(1, Regex.Matches(pdf.PageContents()[0], @"1 0 0 rg").Count);
+        Assert.Equal(1, Regex.Count(pdf.PageContents()[0], "1 0 0 rg"));
     }
 
     [Fact]
@@ -527,7 +527,7 @@ public class HtmlLayoutTests
             $"<tbody>{rows}</tbody></table>");
 
         Assert.True(pdf.PageCount > 1);
-        Assert.Equal(pdf.PageCount, Regex.Matches(pdf.ExtractText(), "BASLIK").Count);
+        Assert.Equal(pdf.PageCount, Regex.Count(pdf.ExtractText(), "BASLIK"));
     }
 
     // ---- drawings and fonts ----
@@ -637,6 +637,72 @@ public class HtmlLayoutTests
 
         Assert.Equal(Place(plain, "bir").X + 4, Place(bordered, "bir").X, 1);
         Assert.Equal(Place(plain, "bir").Y - 4, Place(bordered, "bir").Y, 1);
+    }
+
+    // ---- shadows ----
+
+    [Fact]
+    public void A_shadow_with_nothing_to_blur_is_a_shape_like_any_other()
+    {
+        var pdf = Html("<div style='width:100pt;height:50pt;background:#fff;box-shadow:6pt 6pt 0 #ff0000'>golge</div>");
+
+        // Drawn as a plain filled path in the colour it was given, moved by the offset.
+        Assert.Contains("1 0 0 rg", pdf.PageContents()[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("/SMask", pdf.Raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_blurred_shadow_is_laid_down_through_a_picture_of_its_softness()
+    {
+        var pdf = Html("<div style='width:100pt;height:50pt;background:#fff;box-shadow:0 2pt 6pt rgba(0,0,0,0.3)'>golge</div>");
+
+        // The colour stays a colour; only the soft edge is a picture, as a browser writes one.
+        Assert.Contains("/SMask<</Type/Mask/S/Luminosity", pdf.Raw, StringComparison.Ordinal);
+        Assert.Contains("/ColorSpace/DeviceGray", pdf.Raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_shadow_cast_inside_the_box_is_left_out()
+    {
+        var inset = Html("<div style='width:100pt;height:50pt;box-shadow:inset 0 2pt 6pt #000'>golge</div>");
+        var none = Html("<div style='width:100pt;height:50pt'>golge</div>");
+
+        Assert.DoesNotContain("/SMask", inset.Raw, StringComparison.Ordinal);
+        Assert.Equal(none.PageContents()[0].Length, inset.PageContents()[0].Length);
+    }
+
+    [Fact]
+    public void A_box_may_cast_several_shadows()
+    {
+        var pdf = Html(
+            "<div style='width:100pt;height:50pt;background:#fff;" +
+            "box-shadow:4pt 4pt 0 #ff0000, -4pt -4pt 0 #0000ff'>golge</div>");
+
+        Assert.Contains("1 0 0 rg", pdf.PageContents()[0], StringComparison.Ordinal);
+        Assert.Contains("0 0 1 rg", pdf.PageContents()[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void How_much_of_a_shadow_shows_through_is_read_from_its_colour()
+    {
+        var solid = Html("<div style='width:100pt;height:50pt;box-shadow:6pt 6pt 0 rgb(0,0,0)'>golge</div>");
+        var faint = Html("<div style='width:100pt;height:50pt;box-shadow:6pt 6pt 0 rgba(0,0,0,0.2)'>golge</div>");
+
+        // A shadow that only partly shows through is drawn in a group of its own, with how much it shows.
+        Assert.Contains("/ExtGState", faint.Raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("/ExtGState", solid.Raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_fluent_api_can_cast_a_shadow_too()
+    {
+        var pdf = Inspect(Generate(c => c
+            .Shadow(0, 2, 6, Colors.Black, opacity: 0.3f)
+            .CornerRadius(6)
+            .Background(Colors.White)
+            .Width(120).Height(60)));
+
+        Assert.Contains("/SMask<</Type/Mask/S/Luminosity", pdf.Raw, StringComparison.Ordinal);
     }
 
     // ---- what a reader for the blind is told ----

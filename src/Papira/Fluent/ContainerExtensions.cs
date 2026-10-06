@@ -1,5 +1,6 @@
 using Papira.Elements;
 using Papira.Infrastructure;
+using Papira.Rendering;
 
 namespace Papira;
 
@@ -166,6 +167,27 @@ public static class ContainerExtensions
     /// </summary>
     public static IContainer CornerRadius(this IContainer container, float radius) =>
         container.Assign(new CornerRadiusElement(radius));
+
+    /// <summary>
+    /// Draws a shadow behind the content, as a style sheet's <c>box-shadow</c> does: moved by
+    /// <paramref name="offsetX"/> and <paramref name="offsetY"/>, softened over <paramref name="blur"/>
+    /// points, and cast <paramref name="spread"/> points larger than the box itself. Call it before
+    /// <see cref="CornerRadius"/> so that the shadow follows the rounded corners.
+    /// </summary>
+    public static IContainer Shadow(
+        this IContainer container,
+        float offsetX,
+        float offsetY,
+        float blur,
+        Color color,
+        float opacity = 1,
+        float spread = 0)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(blur);
+        return container.Assign(new ShadowElement(
+            [new BoxShadow(offsetX, offsetY, blur, spread, color, Math.Clamp(opacity, 0, 1))],
+            radius: 0));
+    }
 
     /// <summary>
     /// Fills the area with a linear gradient through the given colors.

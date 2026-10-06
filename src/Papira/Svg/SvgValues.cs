@@ -160,19 +160,32 @@ internal static class SvgValues
         return Math.Clamp(value, 0, 1);
     }
 
-    public static bool TryColor(string text, out Color color)
+    public static bool TryColor(string text, out Color color) => TryColor(text, out color, out _);
+
+    /// <summary>
+    /// The colour a value names, and how much of it shows through. In PDF transparency is a graphics
+    /// state rather than part of a colour, so the two are read apart.
+    /// </summary>
+    public static bool TryColor(string text, out Color color, out float alpha)
     {
         color = default;
+        alpha = 1;
         text = text.Trim();
         if (text.Length == 0)
             return false;
 
         if (text[0] == '#')
-            return TryHex(text.AsSpan(1), out color);
+            return TryHex(text.AsSpan(1), out color, out alpha);
 
         var lower = text.ToLowerInvariant();
         if (lower.StartsWith("rgb", StringComparison.Ordinal) || lower.StartsWith("hsl", StringComparison.Ordinal))
-            return TryFunction(lower, out color);
+            return TryFunction(lower, out color, out alpha);
+
+        if (lower == "transparent")
+        {
+            alpha = 0;
+            return true;
+        }
 
         if (Named(lower) is not { } named)
             return false;
@@ -181,26 +194,32 @@ internal static class SvgValues
         return true;
     }
 
-    private static bool TryHex(ReadOnlySpan<char> hex, out Color color)
+    private static bool TryHex(ReadOnlySpan<char> hex, out Color color, out float alpha)
     {
         color = default;
+        alpha = 1;
         foreach (var c in hex)
         {
             if (Digit(c) < 0)
                 return false;
         }
 
-        // The alpha of #rgba and #rrggbbaa is dropped: in PDF transparency is a graphics state, not part of a color.
         switch (hex.Length)
         {
             case 3 or 4:
                 color = new Color((byte)(Digit(hex[0]) * 17), (byte)(Digit(hex[1]) * 17), (byte)(Digit(hex[2]) * 17));
+                if (hex.Length == 4)
+                    alpha = Digit(hex[3]) * 17 / 255f;
+
                 return true;
             case 6 or 8:
                 color = new Color(
                     (byte)(Digit(hex[0]) * 16 + Digit(hex[1])),
                     (byte)(Digit(hex[2]) * 16 + Digit(hex[3])),
                     (byte)(Digit(hex[4]) * 16 + Digit(hex[5])));
+                if (hex.Length == 8)
+                    alpha = ((Digit(hex[6]) * 16) + Digit(hex[7])) / 255f;
+
                 return true;
             default:
                 return false;
@@ -215,9 +234,10 @@ internal static class SvgValues
         };
     }
 
-    private static bool TryFunction(string text, out Color color)
+    private static bool TryFunction(string text, out Color color, out float alpha)
     {
         color = default;
+        alpha = 1;
         var open = text.IndexOf('(');
         if (open < 0)
             return false;
@@ -227,6 +247,9 @@ internal static class SvgValues
         var scanner = new SvgScanner(text[(open + 1)..].Replace('%', ' '));
         if (!scanner.TryReadNumber(out var first) || !scanner.TryReadNumber(out var second) || !scanner.TryReadNumber(out var third))
             return false;
+
+        if (scanner.TryReadNumber(out var fourth))
+            alpha = Math.Clamp(fourth > 1 && text.Contains('%') ? fourth / 100 : fourth, 0, 1);
 
         if (text.StartsWith("hsl", StringComparison.Ordinal))
         {

@@ -11,6 +11,12 @@ public sealed class Image
 {
     private readonly Lazy<EncodedImage> _encoded;
 
+    private Image(int width, int height, EncodedImage encoded)
+    {
+        (Width, Height) = (width, height);
+        _encoded = new Lazy<EncodedImage>(() => encoded);
+    }
+
     private Image(byte[] data)
     {
         if (JpegDecoder.IsJpeg(data))
@@ -46,6 +52,20 @@ public sealed class Image
     internal float AspectRatio => (float)Height / Width;
 
     internal EncodedImage Encoded => _encoded.Value;
+
+    /// <summary>
+    /// A picture made of one grey value a pixel, for the shades Papira draws itself — the soft edge of
+    /// a shadow, say. The samples run from the top left, a row at a time.
+    /// </summary>
+    internal static Image FromGrey(byte[] samples, int width, int height) => new(width, height, new EncodedImage
+    {
+        Width = width,
+        Height = height,
+        Data = Pdf.PdfWriter.Deflate(samples, CompressionLevel.Optimal),
+        Filter = "FlateDecode",
+        BitsPerComponent = 8,
+        ColorSpace = buffer => buffer.Ascii("/DeviceGray"),
+    });
 
     /// <summary>Creates an image from JPEG, PNG or WebP data. The data is copied.</summary>
     /// <exception cref="NotSupportedException">The format or a variant of it is not supported.</exception>

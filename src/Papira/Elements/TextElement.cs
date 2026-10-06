@@ -26,13 +26,22 @@ internal sealed class ResolvedTextStyle
 
         var font = Font.Font;
         Scale = Size / font.UnitsPerEm;
-        Ascent = font.Ascender * Scale;
-        Descent = -font.Descender * Scale;
+
+        // A browser rounds each of the three numbers a font gives for its line — how far it reaches above
+        // the baseline, how far below, and the space it asks for between lines — to whole screen pixels,
+        // and lays out the line from what is left. Text that is to break over its pages where a browser
+        // would break it is measured the same way; everything else is measured as the font states it.
+        var screen = style.ScreenMetrics == true;
+        Ascent = screen ? Pixels(font.Ascender * Scale) : font.Ascender * Scale;
+        Descent = screen ? Pixels(-font.Descender * Scale) : -font.Descender * Scale;
         LineHeight = style.LineHeightFactor is { } factor
             ? Size * factor
-            : (font.Ascender - font.Descender + font.LineGap) * Scale;
+            : Ascent + Descent + (screen ? Pixels(font.LineGap * Scale) : font.LineGap * Scale);
         Features = ParseFeatures(style.Features);
     }
+
+    /// <summary>A length rounded to whole screen pixels, of which there are 96 to the inch.</summary>
+    private static float Pixels(float points) => MathF.Round(points * 4 / 3) * 0.75f;
 
     /// <summary>
     /// The features the style asks the font for, by their four-letter names. A number or "on"/"off" after

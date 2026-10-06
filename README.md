@@ -9,7 +9,7 @@
 
 Papira builds PDF documents from C# code with a fluent layout API. It has no browser, no native libraries and no third-party packages: the PDF writer, TrueType parser, font subsetter, PNG/JPEG handling and the layout engine are all part of the library.
 
-- **Fast.** A 2-page invoice takes about 0.6 ms on one thread. On an 8-core Apple M2, Papira produces about 5,000 invoices per second.
+- **Fast.** A 2-page invoice takes about 0.7 ms on one thread. On an 8-core Apple M2, Papira produces about 5,000 invoices per second.
 - **Uses every core.** Compression, font subsetting and image encoding run in parallel, and documents can be generated concurrently from many threads.
 - **Typographic text.** Pair kerning from the font's GPOS or kern table, as in browsers and word processors. Fonts are embedded as subsets with a ToUnicode map, so text stays selectable and searchable. Characters such as ğ, ş, ı, İ, ₺ and € work out of the box.
 - **Every writing direction.** Arabic and Hebrew are laid out right to left with the Unicode bidirectional algorithm, and cursive letters take their initial, medial and final shapes from the font itself.
@@ -129,6 +129,8 @@ Rows connected by a row span are kept together: if they don't fit on the page, t
 ```csharp
 container.CornerRadius(8).Background(Colors.Blue);                       // rounded, and the content is clipped
 container.Opacity(0.4f).Background(Colors.Green);
+container.Shadow(0, 2, 6, Colors.Black, opacity: 0.2f)                   // moved, softened, and behind
+    .CornerRadius(8).Background(Colors.White);
 container.BackgroundLinearGradient(90, Colors.Blue, Colors.Purple);      // 0° left to right, 90° top to bottom
 container.RotateLeft().Text("Vertical heading");                         // swaps width and height
 container.Rotate(-20).Text("DRAFT");                                     // keeps the layout size
@@ -243,7 +245,7 @@ pictures you allow. What it does cover is what document templates are written in
 | `table` with `thead`, `colspan`, `rowspan`, column widths, `cellpadding`, `border`, `display: table-header-group`; columns as wide as what they hold | `border-collapse` as a visual rule, `vertical-align`, captions |
 | `img` from a file, a data URI, a registered resource or an address, drawn at its own size; `<svg>` written in the markup and SVG files, drawn as vectors | Pictures referred to from CSS (`background-image`) |
 | `a` to an address or to an `id` in the document, inside a paragraph or around a block | |
-| Colours, backgrounds, borders, `border-radius`, margins (they collapse, as CSS says), padding, `box-sizing` | `box-shadow`, gradients, `filter` |
+| Colours (including `rgba`/`hsla`), backgrounds, borders, `border-radius`, `box-shadow`, margins (they collapse, as CSS says), padding, `box-sizing` | Gradients, `filter` |
 | `width`, `height`, `min-`/`max-` of both, in lengths, percentages, `vh`/`vw` and `calc()` | Percentages of a height that is itself not stated |
 | Fonts, sizes in `px`/`pt`/`em`/`rem`/`%`, weight, style, decoration, letter spacing, line height, `text-transform`, `font-variant-numeric`, `font-feature-settings` | `@font-face`: fonts are the ones Papira knows about |
 | `text-align`, `white-space: pre`, `display: none`, `visibility`, `object-fit`, `transform: scale()`, `page-break-before`/`-after`, `page-break-inside: avoid` | `@media`, `@page`, transforms other than scaling |
@@ -276,15 +278,19 @@ picture with seventy-two points marked on it, inline boxes, and a table of fifty
 a tenth of a point apart across the page and a third of a point down it. The widest a word stood from
 where Chrome put it was a point and a quarter across, and three points down.
 
+Lines are as tall as a browser makes them, down to the last fraction: text laid out from markup is
+measured the way a browser measures it, with what the font says about its letters rounded to whole screen
+pixels first. A page of fifty table rows breaks where Chrome breaks it. (Text laid out through the fluent
+API is measured as the font states it, which is what a page without a browser in mind should do.)
+
 Two differences are worth knowing about:
 
-- **Lines can be a fraction of a point taller or shorter.** A browser rounds what a font says about its
-  letters to whole screen pixels; Papira does not, because a page is not a screen. The difference is at
-  most about half a point a line, in either direction, and over a long table it can move a page break by
-  a row.
-- **A character no font of the document can draw is left out.** Browsers draw a box in its place. Give
-  Papira a font that has the character — see [Fallback fonts](#fallback-fonts) — if your templates use
-  symbols such as ✓ or →.
+- **A character no font of the document can draw is left out.** Browsers reach for any font on the
+  machine; Papira draws with the fonts it was given, so that a document comes out the same on a
+  developer's machine and in a container with no fonts installed. Name a font that has the character —
+  see [Fallback fonts](#fallback-fonts) — if your templates use symbols such as ✓ or →.
+- **Shadows come out a little stronger than Chrome prints them.** Papira draws the shadow the style
+  sheet asks for; Chrome's own print output washes it out. On screen, the two agree.
 
 ## Archiving, attachments and encryption
 

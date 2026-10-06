@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 from 1.0 on, the public API only changes in a way that breaks code in a major version.
 
+## [1.3.0] - 2026-10-07
+
+What was left over from the templates a browser prints: the shadows a box casts, and lines as tall as a
+browser makes them.
+
+### Added
+
+- Shadows (`box-shadow`, and `IContainer.Shadow` for the fluent API): moved, softened and cast larger than the box, in as many layers as the markup states. A shadow with nothing to blur is drawn as a shape; a blurred one is laid down through a grey picture of its own softness, which is how a browser writes one into a PDF — the colour stays a colour and only the edge is a picture.
+- Colours may say how much of them shows through: `rgba()`, `hsla()`, `#rgba` and `#rrggbbaa` are read wherever a colour is.
+
+### Changed
+
+- Text laid out from markup is measured the way a browser measures it: what the font says about its letters is rounded to whole screen pixels before a line is laid out. Line for line, Papira's lines are now exactly as tall as Chrome's, so a page of fifty table rows breaks where Chrome breaks it. Text laid out through the fluent API is measured as the font states it, as before.
+- A picture used more than once in a template is read once and embedded once.
+
 ## [1.2.0] - 2026-10-07
 
 The HTML templates a browser prints today. Everything here was compared with what Chrome prints from the
@@ -134,6 +149,7 @@ First public release.
 - Deterministic output: identical input (with a fixed `CreationDate`) produces byte-identical files.
 - Hardened parsing of untrusted fonts and images: size limits, bounded decompression and validation of all offsets.
 
+[1.3.0]: https://github.com/mertgundoganx/Papira/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mertgundoganx/Papira/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/mertgundoganx/Papira/compare/v1.0.0...v1.1.1
 [1.0.0]: https://github.com/mertgundoganx/Papira/compare/v0.2.0...v1.0.0
