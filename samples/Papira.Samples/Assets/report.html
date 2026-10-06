@@ -16,11 +16,41 @@
     tr.total td { background: #eef1f7; font-weight: bold; border-bottom: none; }
     .note { font-size: 9pt; color: #6b7480; }
     ul { margin: 6pt 0; }
+
+    /* The layouts a template is written in: a header laid out as a flexible box, figures in a grid,
+       a label placed against the picture it belongs to. */
+    * { box-sizing: border-box; }
+    header { display: flex; justify-content: space-between; align-items: baseline;
+             border-bottom: 2pt solid #1a3a6b; padding-bottom: 4pt; }
+    header .when { color: #5b6472; font-size: 10pt; }
+    .figures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10pt; margin: 12pt 0; }
+    .figure { background: #f4f6fa; border-radius: 6pt; padding: 8pt; }
+    .figure .label { font-size: 8pt; color: #6b7480; text-transform: uppercase; }
+    .figure .value { font-size: 15pt; font-weight: bold; color: #1a3a6b;
+                     font-variant-numeric: tabular-nums; }
+    .tags .tag { display: inline-block; background: #eef1f7; border-radius: 8pt;
+                 padding: 1pt 7pt; margin-right: 4pt; }
+    .stage { position: relative; width: 100%; max-width: 160pt; margin: 6pt auto; }
+    .stage img { width: 100%; }
+    .stage .pin { position: absolute; left: calc(50% - 6pt); top: -6pt; background: #1a3a6b;
+                  color: #ffffff; font-size: 8pt; border-radius: 6pt; padding: 0 5pt; }
+    tbody tr:nth-child(even) td { background: #fafbfd; }
   </style>
 </head>
 <body>
-  <h1>Çeyrek Raporu</h1>
-  <p class="lead">2026 üçüncü çeyrek &middot; Papira A.Ş.</p>
+  <header>
+    <h1>Çeyrek Raporu</h1>
+    <div class="when">2026 üçüncü çeyrek</div>
+  </header>
+  <p class="lead">Papira A.Ş.</p>
+
+  <div class="figures">
+    <div class="figure"><div class="label">Gelir</div><div class="value">1.490.000</div></div>
+    <div class="figure"><div class="label">Gider</div><div class="value">640.000</div></div>
+    <div class="figure"><div class="label">Fark</div><div class="value">850.000</div></div>
+  </div>
+
+  <p class="tags"><span class="tag">danışmanlık</span><span class="tag">yazılım</span><span class="tag">bakım</span></p>
 
   <p>Bu sayfa, bir HTML şablonundan üretilmiştir. Başlıklar, paragraflar, listeler, tablolar,
      görseller ve bağlantılar olduğu gibi yerleşir; belge
@@ -53,7 +83,10 @@
   </ul>
 
   <h2>Logo</h2>
-  <p><img src="logo.svg" width="110" alt="Papira logosu"></p>
+  <div class="stage">
+    <img src="logo.svg" alt="Papira logosu">
+    <span class="pin">yeni</span>
+  </div>
 
   <p class="note">Bu belge Papira'nın HTML desteğiyle üretilmiştir.</p>
 </body>

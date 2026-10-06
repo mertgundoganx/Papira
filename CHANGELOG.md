@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 from 1.0 on, the public API only changes in a way that breaks code in a major version.
 
+## [1.2.0] - 2026-10-07
+
+The HTML templates a browser prints today. Everything here was compared with what Chrome prints from the
+same markup, page by page and word by word.
+
+### Added
+
+- Flexible boxes (`display: flex`): the direction, wrapping, `justify-content` in all its forms, `align-items` and `align-self` — including lining items up on their text — `gap`, and `flex` with the sizes it grows and shrinks from. A column of items that only stacks is laid out as an ordinary column, so it goes on breaking over pages.
+- Grids (`display: grid`), as far as a page needs them: `grid-template-columns` written in `fr`, in lengths, in percentages, with `repeat()` and `minmax()`, and the gaps between the tracks. The children fall into the columns a row at a time, and a grid taller than a page breaks between its rows.
+- Elements placed against their container (`position: relative` and `absolute`): offsets from any edge, as a length or as a share of the box, negative ones that put the element outside it, and an element held to both edges of an axis spanning the distance between them. Such an element takes no room where it is written, as CSS says.
+- Pictures fetched over the network (`HtmlOptions.AllowRemoteImages`). Every picture of a document is fetched at once rather than one after another, with a timeout and a size limit of their own, and a picture that does not arrive is left out instead of the document going unwritten. Addresses on the machine itself and on its own network are refused unless they are allowed, so that markup from elsewhere cannot read what only the machine can reach.
+- Sizes that follow the space around them: percentages on any element, `min-width`, `max-width`, `min-height`, `max-height`, `box-sizing`, the sums `calc()` writes, and the viewport units `vh` and `vw`.
+- Boxes that stand in a line of text (`display: inline-block`): they keep their own size, padding and background, sit on the line of the text around them, and wrap to the next line when the one they are on is full.
+- The page number in the markup itself: an element of the class `pageNumber` or `totalPages` is drawn as the number of the page it ends up on, or as how many pages there are, so a footer written for a browser reads the same here.
+- Magnifying a whole document (`HtmlOptions.Zoom`), as the scale of a print dialog does: the markup is laid out in a page that much narrower and drawn that much larger.
+- Drawings written in the markup itself (`<svg>`), kept as they were written and drawn as vectors.
+- Selectors that ask where an element stands — `:first-child`, `:last-child`, `:nth-child` (by number, `odd` and `even`), `:only-child`, `:not()` — and the text a rule may put before or after an element (`::before`, `::after` with `content`, including `attr()`).
+- The features a font offers, by name or by their four-letter tags: `font-variant-numeric` (figures of equal width, oldstyle figures, a slashed zero), `font-variant`, `font-feature-settings`, and `TextStyle.FontFeatures` for the fluent API.
+- `text-transform`, in the letters of the language the markup states: the capital of a Turkish `i` is `İ`, and of an English one `I`.
+- `border-radius`, `object-fit` (`contain`, `cover`, `fill`), `transform: scale()`, and `display: table-header-group`, which repeats a group of rows at the top of every page.
+- `IContainer.Decoration()` marks content as an artifact of the page, which a reader for the blind passes over. An `<img alt="">` is marked that way by itself, as the empty description asks.
+- `ImageDescriptor.Stretch()` and `Cover()`, and `TableColumnsDescriptor.AutoColumn()` for a column as wide as what it holds.
+
+### Changed
+
+- A picture told nothing about its size is drawn at its own size, in the pixels it was made of, and shrunk to the page only where it is wider than the room it has. It used to be stretched to the width of whatever held it.
+- A picture stands in the line of text around it instead of starting a block of its own, so a line may hold words and pictures together.
+- The columns of a table that states no widths are as wide as what they hold, and such a table is as wide as its columns need. Tables that state a width, or widths for their columns, are laid out as before.
+- A border takes room of its own in a document laid out from markup, as the box model says.
+- The padding and the margins of a box that carries on over a page are drawn where the box begins and where it ends, and not again at the fold.
+- The styles of `<html>` and `<body>` are applied to the document, and the body is given the margin a browser gives it. A template that sets `body { margin: 0 }` is unaffected; one that does not now stands where a browser puts it.
+
+### Fixed
+
+- A character no font of the document can draw is left out instead of being drawn as the glyph a font keeps for what it cannot draw. That glyph stands for no character at all, which left the reader a blank and made the file neither accessible nor archivable.
+- Whether an element is a block is decided by everything that has a say in it, not only by its `style` attribute: `display` stated in a style sheet is now read.
+- `margin: 0 auto` written as a shorthand centres the box, as the longhands already did, and a box is centred in the space it was given rather than inside its own width.
+
 ## [1.1.1] - 2026-09-27
 
 ### Added
@@ -96,6 +134,7 @@ First public release.
 - Deterministic output: identical input (with a fixed `CreationDate`) produces byte-identical files.
 - Hardened parsing of untrusted fonts and images: size limits, bounded decompression and validation of all offsets.
 
+[1.2.0]: https://github.com/mertgundoganx/Papira/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/mertgundoganx/Papira/compare/v1.0.0...v1.1.1
 [1.0.0]: https://github.com/mertgundoganx/Papira/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/mertgundoganx/Papira/compare/v0.1.0...v0.2.0

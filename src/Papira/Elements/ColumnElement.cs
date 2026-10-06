@@ -81,6 +81,18 @@ internal sealed class ColumnElement : Element
         }
     }
 
+    internal override float? FirstBaseline(Size available, LayoutContext context)
+    {
+        for (var i = _current; i < Items.Count; i++)
+        {
+            var size = new Size(available.Width, available.Height);
+            if (!Items[i].Measure(size, context).IsEmpty)
+                return Items[i].FirstBaseline(size, context);
+        }
+
+        return null;
+    }
+
     internal override void Reset()
     {
         _current = 0;

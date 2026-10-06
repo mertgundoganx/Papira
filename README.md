@@ -19,7 +19,7 @@ Papira builds PDF documents from C# code with a fluent layout API. It has no bro
 - **Accessible.** One setting tags the document with its structure — headings, tables, lists, figures — and the output passes PDF/UA-1.
 - **Fillable forms.** Text fields, checkboxes, radio buttons and dropdowns, drawn by Papira so they look the same in every viewer and print as they stand.
 - **Signatures.** Sign a document with a certificate as it is written; the signature is built in-process and covers the whole file.
-- **HTML templates.** A subset of HTML and CSS — headings, lists, tables, pictures, links, style sheets — laid out without a browser.
+- **HTML templates.** The markup templates are written in — flexible boxes, grids, elements placed against their container, tables, pictures, style sheets — laid out without a browser. Compared with what Chrome prints from the same markup, the two agree to within a point.
 - **Free for any use.** MIT licensed, including commercial use.
 
 Supports .NET 8 and .NET 10. Trimming and Native AOT compatible.
@@ -219,35 +219,72 @@ container.HtmlFile("templates/invoice.html");           // a file, with its fold
 container.Html(html, options => options
     .StyleSheet(File.ReadAllText("invoice.css"))        // a style sheet beside the markup
     .Resource("logo", companyLogo)                      // <img src="logo"> draws this image
-    .BaseDirectory("templates"));
+    .BaseDirectory("templates")                         // where <img src="..."> is looked for
+    .AllowRemoteImages(TimeSpan.FromSeconds(10))        // and pictures from http(s), see below
+    .Zoom(1.7f));                                       // everything 1.7 times the size
 ```
 
 A template engine of your choice fills the markup in; Papira lays it out. The markup becomes ordinary
 Papira elements, so it paginates, and takes part in a tagged document, like anything else — a report
 written as HTML comes out as an accessible PDF, with its headings, lists and tables intact.
 
-This is a document formatter, not a browser: there is no layout engine behind it, no floats, no
-flexbox and no JavaScript. What it does cover is what document templates are written in:
+This is a document formatter, not a browser: there is no JavaScript, and nothing is fetched but the
+pictures you allow. What it does cover is what document templates are written in.
 
 | Supported | Not supported |
 | --- | --- |
-| Headings, paragraphs, `div`, `section`, `blockquote`, `pre`, `hr`, `br` | `float`, `position`, flexbox, grid, multi-column |
+| Headings, paragraphs, `div`, `section`, `blockquote`, `pre`, `hr`, `br` | `float`, multi-column, `JavaScript` |
+| `display: flex` with the direction, `flex-wrap`, `justify-content`, `align-items`, `align-self`, `gap` and `flex`/`flex-grow`/`flex-shrink`/`flex-basis` | `align-content` across several wrapped lines, `order` |
+| `display: grid` with `grid-template-columns` (`fr`, lengths, percentages, `repeat()`, `minmax()`) and the gaps | Named areas, `grid-template-rows`, items that span tracks |
+| `position: relative` and `absolute`, offsets from any edge as a length or a share of the box, negative ones included | `position: sticky`; `fixed` is placed like `absolute` |
+| `display: inline-block`, which keeps its size, padding and background and sits on the line of the text | `vertical-align` other than the baseline |
 | `b`, `strong`, `i`, `em`, `u`, `s`, `small`, `code`, `span`, `mark` and the rest of the inline elements | Sub- and superscript raised off the baseline |
-| `ul`, `ol` (with `type` and `start`), nested lists, `dl` | Counters and generated content (`::before`, `content`) |
-| `table` with `thead`, `colspan`, `rowspan`, column widths, `cellpadding`, `border` | `border-collapse`, `vertical-align`, captions |
-| `img` from a file, a data URI or a registered resource; SVG drawn as vectors | Pictures fetched over the network |
+| `ul`, `ol` (with `type` and `start`), nested lists, `dl` | Counters other than the page number |
+| `table` with `thead`, `colspan`, `rowspan`, column widths, `cellpadding`, `border`, `display: table-header-group`; columns as wide as what they hold | `border-collapse` as a visual rule, `vertical-align`, captions |
+| `img` from a file, a data URI, a registered resource or an address, drawn at its own size; `<svg>` written in the markup and SVG files, drawn as vectors | Pictures referred to from CSS (`background-image`) |
 | `a` to an address or to an `id` in the document, inside a paragraph or around a block | |
-| Colours, backgrounds, borders, margins (they collapse, as CSS says), padding, width, height | Percentage widths outside tables, `box-shadow`, gradients |
-| Fonts, sizes in `px`/`pt`/`em`/`rem`/`%`, weight, style, decoration, letter spacing, line height | `@font-face`: fonts are the ones Papira knows about |
-| `text-align`, `white-space: pre`, `display: none`, `visibility`, `page-break-before`/`-after`, `page-break-inside: avoid` | `@media`, `@page` |
-| Selectors by tag, class, id, `*`, descendant and child; the `style` attribute; specificity | Attribute selectors, pseudo-classes such as `:nth-child`, sibling combinators |
+| Colours, backgrounds, borders, `border-radius`, margins (they collapse, as CSS says), padding, `box-sizing` | `box-shadow`, gradients, `filter` |
+| `width`, `height`, `min-`/`max-` of both, in lengths, percentages, `vh`/`vw` and `calc()` | Percentages of a height that is itself not stated |
+| Fonts, sizes in `px`/`pt`/`em`/`rem`/`%`, weight, style, decoration, letter spacing, line height, `text-transform`, `font-variant-numeric`, `font-feature-settings` | `@font-face`: fonts are the ones Papira knows about |
+| `text-align`, `white-space: pre`, `display: none`, `visibility`, `object-fit`, `transform: scale()`, `page-break-before`/`-after`, `page-break-inside: avoid` | `@media`, `@page`, transforms other than scaling |
+| Selectors by tag, class, id, `*`, descendant and child; `:first-child`, `:last-child`, `:nth-child`, `:only-child`, `:not()`; `::before` and `::after` with `content`; the `style` attribute; specificity | Attribute selectors, sibling combinators |
 
 Sizes without a unit are CSS pixels, three quarters of a point each. `1em` starts from 12 points unless
 `options.FontSize(...)` says otherwise; text that states no size of its own keeps the style of the
 document around it. A rule whose selector Papira does not understand is skipped rather than guessed at.
 
-The output was compared with what Chrome prints from the same markup: block by block, the two agree
-to within a point.
+### The page number, and pictures from the network
+
+A footer written as markup can say which page it is on. The names are the ones a browser's own print
+templates use, so a footer written for one reads the same here:
+
+```csharp
+page.Footer().Html("<div>Sayfa <span class='pageNumber'></span> / <span class='totalPages'></span></div>");
+```
+
+`AllowRemoteImages` lets the pictures of a document be fetched over http and https. They are all fetched
+at once, before the document is laid out, so a page of pictures costs one round of waiting; a picture
+that does not arrive is left out and the document is still written. Addresses on the machine itself and
+on its own network are refused unless `allowPrivateNetworks` says otherwise, so that markup from
+elsewhere cannot read what only the machine can reach. Turn it on for markup you trust.
+
+### How close it is to a browser
+
+Every layout above was compared with what Chrome prints from the same markup, word by word. On a report
+of a kind templates are written as — a header laid out with flexible boxes, a seven-column grid, a
+picture with seventy-two points marked on it, inline boxes, and a table of fifty rows — the words stand
+a tenth of a point apart across the page and a third of a point down it. The widest a word stood from
+where Chrome put it was a point and a quarter across, and three points down.
+
+Two differences are worth knowing about:
+
+- **Lines can be a fraction of a point taller or shorter.** A browser rounds what a font says about its
+  letters to whole screen pixels; Papira does not, because a page is not a screen. The difference is at
+  most about half a point a line, in either direction, and over a long table it can move a page break by
+  a row.
+- **A character no font of the document can draw is left out.** Browsers draw a box in its place. Give
+  Papira a font that has the character — see [Fallback fonts](#fallback-fonts) — if your templates use
+  symbols such as ✓ or →.
 
 ## Archiving, attachments and encryption
 
@@ -553,7 +590,7 @@ These features are not implemented yet:
   fonts that carry only Apple's are drawn unshaped.
 - SVG filters, which need the drawing to be turned into pixels first. Text, masks and patterns are drawn;
   see the table above.
-- A full browser engine: floats, flexbox, grid and JavaScript are out of scope. See the HTML table above.
+- A browser: floats, JavaScript and the parts of CSS a page does not need are out of scope. Flexible boxes, grids and elements placed against their container are laid out; see the HTML table above.
 
 Contributions are welcome. See the [issues](https://github.com/mertgundoganx/Papira/issues).
 

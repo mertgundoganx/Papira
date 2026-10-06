@@ -118,6 +118,19 @@ internal sealed class RowElement : Element
         }
     }
 
+    internal override float? FirstBaseline(Size available, LayoutContext context)
+    {
+        var widths = ComputeWidths(available, context);
+        float? deepest = null;
+        for (var i = 0; i < Items.Count; i++)
+        {
+            if (Items[i].FirstBaseline(new Size(widths[i], available.Height), context) is { } baseline)
+                deepest = Math.Max(deepest ?? 0, baseline);
+        }
+
+        return deepest;
+    }
+
     internal override void Reset()
     {
         foreach (var item in Items)

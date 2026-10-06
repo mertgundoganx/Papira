@@ -72,7 +72,14 @@ internal static class TextShaper
     /// Fills <paramref name="buffer"/> with the glyphs for <paramref name="text"/>. The characters that
     /// only control joining are used for the shaping and then dropped, as they have nothing to draw.
     /// </summary>
-    public static void Shape(TrueTypeFont font, ReadOnlySpan<int> text, uint script, bool rightToLeft, ShapingBuffer buffer, bool ligatures = true)
+    public static void Shape(
+        TrueTypeFont font,
+        ReadOnlySpan<int> text,
+        uint script,
+        bool rightToLeft,
+        ShapingBuffer buffer,
+        bool ligatures = true,
+        uint[]? features = null)
     {
         // The scripts of India are written in syllables, which are put in order before the font is
         // asked to draw them; that is a shaper of its own.
@@ -149,21 +156,35 @@ internal static class TextShaper
 
         var substitution = font.Substitution;
         if (!substitution.IsEmpty)
-        {
-            var stages = (cursive, ligatures) switch
-            {
-                (true, true) => GlyphSubstitution.CursiveStages,
-                (true, false) => GlyphSubstitution.CursiveStagesWithoutLigatures,
-                (false, true) => GlyphSubstitution.SimpleStages,
-                _ => GlyphSubstitution.SimpleStagesWithoutLigatures,
-            };
-
-            substitution.Apply(ScriptTag(script), stages, buffer);
-        }
+            substitution.Apply(ScriptTag(script), Stages(cursive, ligatures, features), buffer);
 
         buffer.RemoveInvisible();
         Position(font, text, buffer, script, rightToLeft);
     }
+
+    /// <summary>
+    /// What Papira asks the font for, with the features the text itself asks for added at the end. The
+    /// stages of a run are looked up rather than built, because the font remembers what it worked out
+    /// for a set of them and would have to work it out again for every new one.
+    /// </summary>
+    private static uint[][] Stages(bool cursive, bool ligatures, uint[]? features)
+    {
+        var stages = (cursive, ligatures) switch
+        {
+            (true, true) => GlyphSubstitution.CursiveStages,
+            (true, false) => GlyphSubstitution.CursiveStagesWithoutLigatures,
+            (false, true) => GlyphSubstitution.SimpleStages,
+            _ => GlyphSubstitution.SimpleStagesWithoutLigatures,
+        };
+
+        if (features is not { Length: > 0 })
+            return stages;
+
+        var kind = (cursive ? 2 : 0) + (ligatures ? 1 : 0);
+        return Extended.GetOrAdd((string.Join(',', features), kind), _ => [.. stages, features]);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Features, int Kind), uint[][]> Extended = new();
 
     /// <summary>
     /// Puts the glyphs the font chose in their places: the marks on the letters they belong to, the

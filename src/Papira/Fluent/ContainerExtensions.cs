@@ -1,4 +1,5 @@
 using Papira.Elements;
+using Papira.Infrastructure;
 
 namespace Papira;
 
@@ -49,6 +50,18 @@ public static class ContainerExtensions
         return container.Assign(new PaddingElement { Left = left, Top = top, Right = right, Bottom = bottom });
     }
 
+    /// <summary>
+    /// Says that the padding just added belongs to the box as a whole: a box that carries on over a page
+    /// is padded where it begins and where it ends, not again at the fold. This is how CSS treats it.
+    /// </summary>
+    internal static IContainer PadAtTheEnds(this IContainer container)
+    {
+        if (container is PaddingElement padding)
+            padding.AtTheEnds = true;
+
+        return container;
+    }
+
     // ---- Decoration ------------------------------------------------------------------------------
 
     public static IContainer Background(this IContainer container, Color color) =>
@@ -87,23 +100,32 @@ public static class ContainerExtensions
 
     // ---- Size ------------------------------------------------------------------------------------
 
-    public static IContainer Width(this IContainer container, float value) => container.Constrain(minWidth: value, maxWidth: value);
-    public static IContainer MinWidth(this IContainer container, float value) => container.Constrain(minWidth: value);
-    public static IContainer MaxWidth(this IContainer container, float value) => container.Constrain(maxWidth: value);
-    public static IContainer Height(this IContainer container, float value) => container.Constrain(minHeight: value, maxHeight: value);
-    public static IContainer MinHeight(this IContainer container, float value) => container.Constrain(minHeight: value);
-    public static IContainer MaxHeight(this IContainer container, float value) => container.Constrain(maxHeight: value);
+    public static IContainer Width(this IContainer container, float value) => container.Constrain(width: CssLength.FromPoints(value));
+    public static IContainer MinWidth(this IContainer container, float value) => container.Constrain(minWidth: CssLength.FromPoints(value));
+    public static IContainer MaxWidth(this IContainer container, float value) => container.Constrain(maxWidth: CssLength.FromPoints(value));
+    public static IContainer Height(this IContainer container, float value) => container.Constrain(height: CssLength.FromPoints(value));
+    public static IContainer MinHeight(this IContainer container, float value) => container.Constrain(minHeight: CssLength.FromPoints(value));
+    public static IContainer MaxHeight(this IContainer container, float value) => container.Constrain(maxHeight: CssLength.FromPoints(value));
 
-    private static ConstrainedElement Constrain(this IContainer container, float? minWidth = null, float? maxWidth = null, float? minHeight = null, float? maxHeight = null)
+    internal static ConstrainedElement Constrain(
+        this IContainer container,
+        CssLength? width = null,
+        CssLength? minWidth = null,
+        CssLength? maxWidth = null,
+        CssLength? height = null,
+        CssLength? minHeight = null,
+        CssLength? maxHeight = null)
     {
         var element = container is ConstrainedElement existing && ReferenceEquals(existing.Child, EmptyElement.Instance)
             ? existing
             : container.Assign(new ConstrainedElement());
 
-        if (minWidth is { } a) element.MinWidth = a;
-        if (maxWidth is { } b) element.MaxWidth = b;
-        if (minHeight is { } c) element.MinHeight = c;
-        if (maxHeight is { } d) element.MaxHeight = d;
+        if (width is { } a) element.Width = a;
+        if (minWidth is { } b) element.MinWidth = b;
+        if (maxWidth is { } c) element.MaxWidth = c;
+        if (height is { } d) element.Height = d;
+        if (minHeight is { } e) element.MinHeight = e;
+        if (maxHeight is { } f) element.MaxHeight = f;
         return element;
     }
 
@@ -209,6 +231,12 @@ public static class ContainerExtensions
         container.Assign(new EnsureSpaceElement(minHeight));
 
     public static void PageBreak(this IContainer container) => container.Assign(new PageBreakElement());
+
+    /// <summary>
+    /// Marks the content as decoration: it is there to be looked at, not read, so a reader for the blind
+    /// passes over it. Use it for a rule, a watermark or a picture the text beside it already describes.
+    /// </summary>
+    public static IContainer Decoration(this IContainer container) => container.Assign(new DecorationElement());
 
     // ---- Navigation ------------------------------------------------------------------------------
 
@@ -424,6 +452,12 @@ public static class ContainerExtensions
 
         var settings = new HtmlOptions();
         options?.Invoke(settings);
+
+        // Magnifying the document means laying it out in a page as much narrower and drawing that larger,
+        // which is what the scale of a print dialog does.
+        if (settings.ZoomFactor != 1)
+            container = container.Scale(settings.ZoomFactor);
+
         new Papira.Html.HtmlComposer(settings).Compose(container, Papira.Html.HtmlParser.Parse(html));
     }
 

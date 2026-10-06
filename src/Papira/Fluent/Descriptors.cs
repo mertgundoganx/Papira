@@ -165,6 +165,9 @@ public sealed class TableDescriptor
     /// <summary>Header cells, repeated at the top of every page the table spans.</summary>
     public void Header(Action<TableHeaderDescriptor> header) => header(new TableHeaderDescriptor(Element));
 
+    /// <summary>Makes columns that are as wide as what they hold fill the whole width of the table.</summary>
+    internal void Stretch(bool stretch) => Element.Stretch = stretch;
+
     public ITableCellContainer Cell()
     {
         var cell = new TableCell();
@@ -179,9 +182,15 @@ public sealed class TableColumnsDescriptor
 
     internal TableColumnsDescriptor(TableElement table) => _table = table;
 
-    public void ConstantColumn(float width) => _table.Columns.Add(new TableColumn(true, width));
+    public void ConstantColumn(float width) => _table.Columns.Add(new TableColumn(TableColumnKind.Constant, width));
 
-    public void RelativeColumn(float size = 1) => _table.Columns.Add(new TableColumn(false, size));
+    /// <summary>
+    /// A column as wide as what it holds. Where such columns need more room than there is, they share
+    /// what there is between them in proportion to what each of them wanted.
+    /// </summary>
+    public void AutoColumn() => _table.Columns.Add(new TableColumn(TableColumnKind.Content, 0));
+
+    public void RelativeColumn(float size = 1) => _table.Columns.Add(new TableColumn(TableColumnKind.Relative, size));
 }
 
 public sealed class TableHeaderDescriptor
@@ -203,6 +212,9 @@ public sealed class TextDescriptor
     private readonly TextElement _element;
 
     internal TextDescriptor(TextElement element) => _element = element;
+
+    /// <summary>Keeps the space the text ends with, for text that something is drawn right after.</summary>
+    internal void KeepTrailingSpace() => _element.KeepTrailingSpace = true;
 
     public TextSpanDescriptor Span(string? text) => Add(new TextSpan { Text = text ?? string.Empty });
 
@@ -376,6 +388,12 @@ public sealed class ImageDescriptor
     /// <summary>Scales to fit entirely in the available area, keeping the aspect ratio.</summary>
     public ImageDescriptor FitArea() => Set(ImageScaling.FitArea);
 
+    /// <summary>Stretches the picture to the whole area it is given, whatever its own shape.</summary>
+    public ImageDescriptor Stretch() => Set(ImageScaling.Stretch);
+
+    /// <summary>Scales the picture until it covers the whole area, cutting off what hangs over the edges.</summary>
+    public ImageDescriptor Cover() => Set(ImageScaling.Cover);
+
     /// <summary>
     /// What a reader for the blind announces in place of the picture. Every picture of a tagged document
     /// needs one, unless it is decoration that says nothing.
@@ -408,6 +426,12 @@ public sealed class SvgDescriptor
 
     /// <summary>Scales to fit entirely in the available area, keeping the aspect ratio.</summary>
     public SvgDescriptor FitArea() => Set(ImageScaling.FitArea);
+
+    /// <summary>Stretches the drawing to the whole area it is given, whatever its own shape.</summary>
+    public SvgDescriptor Stretch() => Set(ImageScaling.Stretch);
+
+    /// <summary>Scales the drawing until it covers the whole area, cutting off what hangs over the edges.</summary>
+    public SvgDescriptor Cover() => Set(ImageScaling.Cover);
 
     /// <summary>What a reader for the blind announces in place of the drawing.</summary>
     public SvgDescriptor Alt(string text)

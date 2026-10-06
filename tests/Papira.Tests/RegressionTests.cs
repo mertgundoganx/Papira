@@ -219,13 +219,17 @@ public class RegressionTests
     // ---- PDF output ------------------------------------------------------------------------------
 
     [Fact]
-    public void Characters_missing_from_font_do_not_get_a_unicode_mapping()
+    public void A_character_no_font_of_the_document_can_draw_is_left_out()
     {
         var pdf = Inspect(Generate(c => c.Text("A中文B")));
         var cmap = pdf.Streams().Single(s => s.Contains("begincmap"));
         var mappings = cmap[cmap.IndexOf("beginbfchar", StringComparison.Ordinal)..];
+
+        // Drawing the glyph a font keeps for what it cannot draw would leave the reader a blank that
+        // stands for no character at all — and a file that is neither accessible nor archivable.
         Assert.DoesNotContain("<0000>", mappings);
-        Assert.Equal("A\uFFFD\uFFFDB\n", pdf.ExtractText());
+        Assert.DoesNotContain("<0000", pdf.PageContents()[0]);
+        Assert.Equal("AB\n", pdf.ExtractText());
     }
 
     [Fact]
