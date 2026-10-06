@@ -229,6 +229,41 @@ internal sealed class Canvas(DocumentResources resources)
         ResetGraphicsState();
     }
 
+    /// <summary>
+    /// Lays a colour over an area through a grey picture: the colour shows where the picture is light
+    /// and not at all where it is dark. The soft edge of a shadow is drawn this way, as a browser draws
+    /// one — the picture holds nothing but the shape of the softness, and the colour stays a colour.
+    /// </summary>
+    public void DrawShadow(Image mask, float x, float y, float width, float height, Color color)
+    {
+        if (width <= 0 || height <= 0)
+            return;
+
+        MarkContent();
+        EndText();
+
+        // The picture is drawn into a stream of its own, in the place on the page the colour goes, and
+        // handed to the page as a graphics state.
+        using var content = new ByteBuffer(256);
+        var inner = new Canvas(resources);
+        inner.BeginContent(content, 0, 0, _matrix);
+        inner.DrawImage(mask, x, y, width, height);
+        inner.EndPage();
+
+        var corners = new[] { ToPdf(x, y), ToPdf(x + width, y), ToPdf(x, y + height), ToPdf(x + width, y + height) };
+        var name = resources.GetMaskForm(
+            content.ToArray(),
+            corners.Min(corner => corner.X),
+            corners.Min(corner => corner.Y),
+            corners.Max(corner => corner.X),
+            corners.Max(corner => corner.Y));
+
+        _out.Ascii("q /").Ascii(name).Ascii(" gs\n");
+        ResetGraphicsState();
+        FillRectangle(x, y, width, height, color);
+        EndGroup();
+    }
+
     // ---- Shapes ----------------------------------------------------------------------------------
 
     public void FillRectangle(float x, float y, float width, float height, Color color)

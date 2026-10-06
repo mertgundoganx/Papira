@@ -452,6 +452,11 @@ internal sealed partial class HtmlComposer(HtmlOptions options)
         if (box.KeepTogether)
             container = container.ShowEntire();
 
+        // A shadow falls outside the box, so it is drawn before the corners are rounded: what rounds
+        // them also cuts away everything that falls outside.
+        if (box.Shadows is { Length: > 0 })
+            container = container.Assign(new ShadowElement(box.Shadows, box.CornerRadius));
+
         if (box.CornerRadius > 0)
             container = container.CornerRadius(box.CornerRadius);
 
@@ -1496,6 +1501,7 @@ internal sealed partial class HtmlComposer(HtmlOptions options)
             MinHeight = Measure("min-height", around.Height),
             MaxHeight = Measure("max-height", around.Height),
             Scale = HtmlValues.Scale(declarations.GetValueOrDefault("transform")),
+            Shadows = HtmlValues.Shadows(declarations.GetValueOrDefault("box-shadow"), size),
             Absolute = position is "absolute" or "fixed",
             Positioned = position is "relative" or "absolute" or "fixed",
             Left = Measure("left", 0),

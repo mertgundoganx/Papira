@@ -74,6 +74,25 @@ internal sealed class BackgroundElement(Color color) : ContainerElement
     }
 }
 
+/// <summary>
+/// Draws the shadows a box casts, behind everything the box itself draws. A shadow lies outside the box,
+/// so it is drawn before the corners are rounded — what rounds them also cuts away what falls outside.
+/// </summary>
+internal sealed class ShadowElement(BoxShadow[] shadows, float radius) : ContainerElement
+{
+    internal override void Draw(Size available, LayoutContext context)
+    {
+        if (context.DrawEmptyDecorations || Child.Measure(available, context).HasContent)
+        {
+            // The first shadow of the list is the one nearest the reader, so it is drawn last.
+            for (var i = shadows.Length - 1; i >= 0; i--)
+                ShadowPainter.Draw(context.Canvas, available, radius > 0 ? radius : context.CornerRadius, shadows[i]);
+        }
+
+        Child.Draw(available, context);
+    }
+}
+
 internal sealed class BorderElement : ContainerElement
 {
     public float Left, Top, Right, Bottom;

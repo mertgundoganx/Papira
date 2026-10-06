@@ -30,6 +30,7 @@ public sealed record TextStyle
     internal bool? IsUnderline { get; init; }
     internal bool? IsStrikethrough { get; init; }
     internal string? Features { get; init; }
+    internal bool? ScreenMetrics { get; init; }
 
     /// <summary>A style with nothing set; everything is inherited.</summary>
     public static TextStyle Default { get; } = new();
@@ -75,6 +76,14 @@ public sealed record TextStyle
     /// </summary>
     public TextStyle FontFeatures(string? features) => this with { Features = features };
 
+    /// <summary>
+    /// Measures the text the way a browser measures it: what the font says about its letters is rounded
+    /// to whole screen pixels before a line is laid out. A page is not a screen, so Papira does not do
+    /// this of its own accord — but a document laid out from markup is measured that way, so that it
+    /// breaks over its pages where a browser would break it.
+    /// </summary>
+    internal TextStyle MeasuredLikeAScreen() => this with { ScreenMetrics = true };
+
     /// <summary>Additional space between characters, in points.</summary>
     public TextStyle LetterSpacing(float points) => this with { Spacing = points };
 
@@ -100,6 +109,7 @@ public sealed record TextStyle
             IsUnderline = IsUnderline ?? parent.IsUnderline,
             IsStrikethrough = IsStrikethrough ?? parent.IsStrikethrough,
             Features = Features ?? parent.Features,
+            ScreenMetrics = ScreenMetrics ?? parent.ScreenMetrics,
         };
     }
 }

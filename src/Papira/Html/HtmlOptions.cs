@@ -12,6 +12,12 @@ public sealed class HtmlOptions
     private readonly List<string> _styleSheets = [];
     private readonly Dictionary<string, object> _resources = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// What has already been read for a source. A template that shows the same picture several times —
+    /// a logo at the top of every section — reads it once and embeds it once.
+    /// </summary>
+    private readonly Dictionary<string, object?> _loaded = new(StringComparer.Ordinal);
+
     internal IReadOnlyList<string> StyleSheets => _styleSheets;
 
     internal string? Directory { get; private set; }
@@ -139,6 +145,16 @@ public sealed class HtmlOptions
     /// <summary>The drawing a picture source refers to, if it is a vector drawing.</summary>
     internal SvgImage? LoadSvg(string source)
     {
+        if (_loaded.TryGetValue("svg:" + source, out var already))
+            return already as SvgImage;
+
+        var drawing = ReadSvg(source);
+        _loaded["svg:" + source] = drawing;
+        return drawing;
+    }
+
+    private SvgImage? ReadSvg(string source)
+    {
         if (_resources.TryGetValue(source, out var registered))
             return registered as SvgImage;
 
@@ -158,6 +174,16 @@ public sealed class HtmlOptions
     /// network. Null where it was to be fetched and could not be, which leaves it out of the document.
     /// </summary>
     internal Image? LoadImage(string source)
+    {
+        if (_loaded.TryGetValue(source, out var already))
+            return already as Image;
+
+        var image = ReadImage(source);
+        _loaded[source] = image;
+        return image;
+    }
+
+    private Image? ReadImage(string source)
     {
         if (_resources.TryGetValue(source, out var registered))
         {

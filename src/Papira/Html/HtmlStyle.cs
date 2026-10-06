@@ -67,7 +67,8 @@ internal sealed class HtmlStyle
     /// <summary>The text style a span of this text is drawn with.</summary>
     public TextStyle ToTextStyle()
     {
-        var style = TextStyle.Default;
+        // Markup is laid out as a browser lays it out, down to how it measures a line.
+        var style = TextStyle.Default.MeasuredLikeAScreen();
         if (FontSizeSet)
             style = style.FontSize(FontSize);
         if (Family != null)
@@ -120,6 +121,9 @@ internal readonly record struct HtmlBox
     public CssLength? MinHeight { get; init; }
 
     public CssLength? MaxHeight { get; init; }
+
+    /// <summary>The shadows the box casts, nearest the reader first.</summary>
+    public Papira.Rendering.BoxShadow[] Shadows { get; init; }
 
     /// <summary>What a <c>transform: scale()</c> magnifies the element by, horizontally and vertically.</summary>
     public (float X, float Y)? Scale { get; init; }
@@ -426,6 +430,110 @@ internal static class HtmlValues
     /// What a <c>transform</c> magnifies the element by. Only scaling changes how much room an element
     /// needs, so that is the one transform a printed document takes from the markup.
     /// </summary>
+    /// <summary>
+    /// The shadows a <c>box-shadow</c> states: how far each is moved, how far it is blurred, how much
+    /// larger than the box it is cast, and in what colour. A shadow cast inside the box (<c>inset</c>)
+    /// is left out rather than drawn as an outer one, which would be worse than not drawing it.
+    /// </summary>
+    public static Papira.Rendering.BoxShadow[] Shadows(string? text, float fontSize)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+            return [];
+
+        var shadows = new List<Papira.Rendering.BoxShadow>(2);
+        foreach (var piece in SplitList(text))
+        {
+            if (piece.Contains("inset", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var lengths = new List<float>(4);
+            var color = Colors.Black;
+            var alpha = 1f;
+
+            foreach (var word in SplitWords(piece))
+            {
+                if (lengths.Count < 4 && Measure(word, fontSize) is { } length && length.IsAbsolute)
+                {
+                    lengths.Add(length.Points);
+                    continue;
+                }
+
+                if (SvgValues.TryColor(word, out var parsed, out var parsedAlpha))
+                    (color, alpha) = (parsed, parsedAlpha);
+            }
+
+            // Without two lengths the shadow says nothing about where it falls.
+            if (lengths.Count < 2)
+                continue;
+
+            shadows.Add(new Papira.Rendering.BoxShadow(
+                lengths[0],
+                lengths[1],
+                lengths.Count > 2 ? Math.Max(0, lengths[2]) : 0,
+                lengths.Count > 3 ? lengths[3] : 0,
+                color,
+                alpha));
+        }
+
+        return [.. shadows];
+    }
+
+    /// <summary>Splits a list on the commas that are not inside brackets, e.g. between two shadows.</summary>
+    private static List<string> SplitList(string text)
+    {
+        var parts = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            switch (text[i])
+            {
+                case '(':
+                    depth++;
+                    break;
+                case ')' when depth > 0:
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    parts.Add(text[start..i]);
+                    start = i + 1;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        parts.Add(text[start..]);
+        return parts;
+    }
+
+    /// <summary>Splits a value on the spaces that are not inside brackets, e.g. "0 2px 6px rgba(0,0,0,.2)".</summary>
+    private static List<string> SplitWords(string text)
+    {
+        var words = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i <= text.Length; i++)
+        {
+            var end = i == text.Length;
+            var c = end ? ' ' : text[i];
+            if (c == '(')
+                depth++;
+            else if (c == ')' && depth > 0)
+                depth--;
+
+            if ((char.IsWhiteSpace(c) && depth == 0) || end)
+            {
+                if (i > start)
+                    words.Add(text[start..i]);
+
+                start = i + 1;
+            }
+        }
+
+        return words;
+    }
+
     public static (float X, float Y)? Scale(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
