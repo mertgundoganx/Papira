@@ -20,54 +20,54 @@ public static class FormDocument
                 page.Size(PageSizes.A4);
                 page.Margin(Unit.Centimetre(2));
 
-                page.Header().PaddingBottom(10).Text("Papira Derneği — Üyelik Başvurusu").FontSize(9).FontColor(Colors.Grey.Darken2);
-                page.Footer().AlignCenter().Text("Formu doldurup kaydedin, ardından bize iletin.").FontSize(8).FontColor(Colors.Grey.Darken1);
+                page.Header().PaddingBottom(10).Text("The Papira Society — membership application").FontSize(9).FontColor(Colors.Grey.Darken2);
+                page.Footer().AlignCenter().Text("Fill the form in, save it, and send it back to us.").FontSize(8).FontColor(Colors.Grey.Darken1);
 
                 page.Content().Column(column =>
                 {
                     column.Spacing(14);
 
-                    column.Item().Text("Üyelik Başvuru Formu").FontSize(20).Bold().Heading(1);
+                    column.Item().Text("Membership application").FontSize(20).Bold().Heading(1);
                     column.Item().Text(
-                        "Aşağıdaki alanları ekranınızda doldurabilir ya da formu yazdırıp elle doldurabilirsiniz.")
+                        "Fill these fields in on screen, or print the form and write in them by hand.")
                         .FontColor(Colors.Grey.Darken3);
 
                     column.Item().Element(c => Field(c, "Ad ve soyad", field =>
-                        field.TextField("name").Tooltip("Ad ve soyadınız").Required()));
+                        field.TextField("name").Tooltip("Your full name").Required()));
 
                     column.Item().Element(c => Field(c, "E-posta adresi", field =>
-                        field.TextField("email").Tooltip("Size ulaşabileceğimiz e-posta adresi").Required()));
+                        field.TextField("email").Tooltip("An address we can reach you at").Required()));
 
                     column.Item().Row(row =>
                     {
-                        row.RelativeItem().Element(c => Field(c, "Şehir", field =>
-                            field.Dropdown("city", "İstanbul", "Ankara", "İzmir", "Bursa", "Antalya")
-                                .Value("İstanbul").Tooltip("Yaşadığınız şehir")));
+                        row.RelativeItem().Element(c => Field(c, "City", field =>
+                            field.Dropdown("city", "Amsterdam", "Berlin", "Dublin", "Lisbon", "Vienna")
+                                .Value("Dublin").Tooltip("Where you live")));
 
                         row.ConstantItem(16);
 
-                        row.RelativeItem().Element(c => Field(c, "Üyelik numarası", field =>
+                        row.RelativeItem().Element(c => Field(c, "Membership number", field =>
                             field.TextField("member").Value("PAP-1024").ReadOnly()
-                                .BackgroundColor(Colors.Grey.Lighten3).Tooltip("Tarafımızdan verilen üyelik numarası")));
+                                .BackgroundColor(Colors.Grey.Lighten3).Tooltip("The number we gave you")));
                     });
 
-                    column.Item().Element(c => Field(c, "Kısa özgeçmiş", field =>
+                    column.Item().Element(c => Field(c, "A few words about you", field =>
                         field.TextField("bio").Multiline().MaxLength(400)
-                            .Tooltip("Kendinizden kısaca söz edin").Height(70)));
+                            .Tooltip("Tell us a little about yourself").Height(70)));
 
-                    column.Item().Text("Tercihler").FontSize(14).SemiBold().Heading(2);
-                    column.Item().Element(c => Option(c, "newsletter", "Aylık bültene abone olmak istiyorum", ticked: true));
-                    column.Item().Element(c => Option(c, "events", "Etkinlik duyuruları gönderilsin"));
-                    column.Item().Element(c => Option(c, "terms", "Üyelik koşullarını okudum ve kabul ediyorum"));
+                    column.Item().Text("Preferences").FontSize(14).SemiBold().Heading(2);
+                    column.Item().Element(c => Option(c, "newsletter", "Send me the monthly newsletter", ticked: true));
+                    column.Item().Element(c => Option(c, "events", "Tell me about events"));
+                    column.Item().Element(c => Option(c, "terms", "I have read and accept the terms of membership"));
                 });
             });
         })
         .WithMetadata(new DocumentMetadata
         {
-            Title = "Üyelik Başvuru Formu",
-            Author = "Papira Derneği",
-            Subject = "Doldurulabilir form örneği",
-            Language = "tr-TR",
+            Title = "Membership application",
+            Author = "The Papira Society",
+            Subject = "A fillable form",
+            Language = "en-GB",
         })
         .WithSettings(new DocumentSettings { Tagged = true });
     }

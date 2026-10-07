@@ -30,10 +30,10 @@ public static class HtmlDocument
         })
         .WithMetadata(new DocumentMetadata
         {
-            Title = "Çeyrek Raporu",
+            Title = "Quarterly Report",
             Author = "Papira",
-            Subject = "HTML şablonundan üretilen belge",
-            Language = "tr-TR",
+            Subject = "A document laid out from an HTML template",
+            Language = "en-GB",
         })
         .WithSettings(new DocumentSettings { Tagged = true });
     }
