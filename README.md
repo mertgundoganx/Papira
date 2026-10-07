@@ -1,36 +1,99 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/mertgundoganx/Papira/main/assets/icon.png" width="110" alt="">
+
 # Papira
+
+**Fast, free, dependency-free PDF generation for .NET**
 
 [![CI](https://github.com/mertgundoganx/Papira/actions/workflows/ci.yml/badge.svg)](https://github.com/mertgundoganx/Papira/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/Papira.svg)](https://www.nuget.org/packages/Papira)
 [![Downloads](https://img.shields.io/nuget/dt/Papira.svg)](https://www.nuget.org/packages/Papira)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/mertgundoganx/Papira/blob/main/LICENSE)
+[![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%2010.0-512BD4)](https://dotnet.microsoft.com/)
 
-**Fast, free, dependency-free PDF generation for .NET.**
+*No browser. No native libraries. No third-party packages. Just C#.*
 
-Papira builds PDF documents from C# code with a fluent layout API. It has no browser, no native libraries and no third-party packages: the PDF writer, TrueType parser, font subsetter, PNG/JPEG handling and the layout engine are all part of the library.
+</div>
 
-- **Fast.** A 2-page invoice takes about 0.7 ms on one thread. On an 8-core Apple M2, Papira produces about 5,000 invoices per second.
-- **Uses every core.** Compression, font subsetting and image encoding run in parallel, and documents can be generated concurrently from many threads.
-- **Typographic text.** Pair kerning from the font's GPOS or kern table, as in browsers and word processors. Fonts are embedded as subsets with a ToUnicode map, so text stays selectable and searchable. Characters such as ğ, ş, ı, İ, ₺ and € work out of the box.
-- **Every writing direction.** Arabic and Hebrew are laid out right to left with the Unicode bidirectional algorithm, and cursive letters take their initial, medial and final shapes from the font itself.
-- **The scripts of India.** Devanagari, Bengali, Tamil and their relatives are shaped syllable by syllable: conjuncts, rephs and vowel signs that move in front of their consonant.
-- **Color emoji.** Emoji are drawn in color from any of the four ways fonts store them, and flags, skin tones and joined sequences come out as one picture.
-- **Same output everywhere.** The bundled Lato font is the default, so documents look the same on Windows, macOS and minimal Linux containers with no fonts installed.
-- **Accessible.** One setting tags the document with its structure — headings, tables, lists, figures — and the output passes PDF/UA-1.
-- **Fillable forms.** Text fields, checkboxes, radio buttons and dropdowns, drawn by Papira so they look the same in every viewer and print as they stand.
-- **Signatures.** Sign a document with a certificate as it is written; the signature is built in-process and covers the whole file.
-- **HTML templates.** The markup templates are written in — flexible boxes, grids, elements placed against their container, tables, pictures, style sheets — laid out without a browser. Compared with what Chrome prints from the same markup, the two agree to within a point.
-- **Free for any use.** MIT licensed, including commercial use.
+---
 
-Supports .NET 8 and .NET 10. Trimming and Native AOT compatible.
+Papira builds PDF documents from C# with a fluent layout API — or from the HTML templates you already
+have. Everything is part of the library: the PDF writer, the TrueType parser, the font subsetter, the
+image decoders, the text shaper and the layout engine.
 
-## Installation
+```csharp
+Document.Create(document => document.Page(page =>
+{
+    page.Size(PageSizes.A4).Margin(40);
+    page.Content().Text("Merhaba, dünya!").FontSize(24).Bold();
+}))
+.GeneratePdf("hello.pdf");
+```
+
+## ✨ What you get
+
+|  |  |
+| --- | --- |
+| ⚡ **Fast** | About **0.7 ms** for a two-page invoice on a single core, and **thousands a second** across a machine's cores |
+| 🪶 **Nothing to install** | One package, **zero dependencies**, no browser and no native binaries — it runs in a scratch container |
+| 🔤 **Real typography** | Kerning and ligatures from the font itself, fonts embedded as subsets, text that stays selectable and searchable |
+| 🌍 **Every writing system** | Right-to-left, cursive Arabic, the nine scripts of India, and colour emoji — compared glyph by glyph with HarfBuzz |
+| 🌐 **Your HTML templates** | Flexible boxes, grids, tables, pictures, style sheets — laid out **within a point of what Chrome prints** |
+| ♿ **Accessible** | One setting writes the structure beside the pages; the output passes **PDF/UA-1** |
+| 🗄️ **Archivable** | **PDF/A-2b** and **PDF/A-3b**, with attachments such as an e-invoice XML |
+| ✍️ **Signed and sealed** | Sign with a certificate as the file is written, or lock it with AES-256 |
+| 🧾 **Fillable forms** | Text fields, checkboxes, radio buttons and dropdowns, drawn by Papira so every viewer shows the same thing |
+| 📐 **The same everywhere** | The bundled font is the default, and identical input gives byte-identical output |
+| 🆓 **Free for any use** | MIT, commercial use included |
+
+Runs on **.NET 8** and **.NET 10**. Trimming and Native AOT compatible — and checked on every build.
+
+## 📊 Numbers
+
+Measured on one core of an ordinary laptop processor, with a two-page invoice of twenty line items:
+
+| | |
+| --- | --- |
+| 📄 One document | **0.4–0.7 ms**, about **25–40 KB** of PDF |
+| 🧵 Across eight cores | **~4,500 documents a second** |
+| 🧠 Memory | **~385 KB** allocated a document; a process that has written thousands sits at **~12 MB** |
+| ❄️ First document in a fresh process | **~100 ms**, or **~44 ms** compiled ahead of time — the font is read once |
+| 📦 Package | **3.5 MB**, no dependencies |
+| 🏗️ Native binary | **~10 MB**, standalone: no .NET runtime on the machine |
+
+And how far the output has been checked against something else:
+
+| | |
+| --- | --- |
+| ✅ Tests | **532**, run on Linux, macOS and Windows, and in a container with no fonts at all |
+| 🌐 Against Chrome | **20 pages** of real markup, word by word: lines exactly as tall, text a tenth of a point apart |
+| 🔠 Against HarfBuzz | Tens of thousands of lines of Arabic, Hebrew and Indic text, glyph by glyph |
+| 📜 Against veraPDF | PDF/A-2b, PDF/A-3b and PDF/UA-1, on every build |
+| 🔍 Against the Unicode tests | Both bidirectional conformance files — **861,948 cases** |
+| 🖼️ Against libwebp and fontTools | 229 pictures and 6,888 glyph outlines, identical |
+
+## 📚 Contents
+
+**Getting started** · [Installation](#-installation) · [Quick start](#-quick-start) · [Layout building blocks](#-layout-building-blocks)
+
+**Content** · [Lists and tables](#-lists-and-merged-table-cells) · [Graphics](#-graphics) · [QR codes and barcodes](#-qr-codes-and-barcodes) · [Fillable forms](#-fillable-forms) · [Images](#-images) · [SVG drawings](#-svg-drawings)
+
+**Templates** · [HTML templates](#-html-templates) · [The page number and remote pictures](#-the-page-number-and-pictures-from-the-network) · [How close it is to a browser](#-how-close-it-is-to-a-browser)
+
+**Files that have to hold up** · [Accessible documents](#-accessible-documents) · [Archiving, attachments and encryption](#-archiving-attachments-and-encryption) · [Signing](#-signing)
+
+**Text** · [Right-to-left and cursive](#-right-to-left-and-cursive-text) · [Scripts of India](#-scripts-of-india) · [Colour emoji](#-colour-emoji) · [Fonts](#-fonts)
+
+**Running it** · [In production](#-in-production) · [Performance tips](#-performance-tips) · [Samples](#-samples) · [Limitations](#-limitations)
+
+## 📦 Installation
 
 ```bash
 dotnet add package Papira
 ```
 
-## Quick start
+## 🚀 Quick start
 
 ```csharp
 using Papira;
@@ -85,7 +148,7 @@ Document.Create(document => document.Page(page =>
 
 Content flows across pages automatically. Table headers repeat on every page, and text, columns and tables split where the page ends.
 
-## Layout building blocks
+## 🧱 Layout building blocks
 
 | Category | API |
 |---|---|
@@ -105,7 +168,7 @@ Content flows across pages automatically. Table headers repeat on every page, an
 
 All sizes are in points (1/72 inch). Use `Unit.Millimetre(...)`, `Unit.Centimetre(...)` or `Unit.Inch(...)` to convert.
 
-### Lists and merged table cells
+### 📋 Lists and merged table cells
 
 ```csharp
 container.NumberedList(list =>
@@ -124,7 +187,7 @@ table.Cell().ColumnSpan(2).Text("Spans two columns");
 
 Rows connected by a row span are kept together: if they don't fit on the page, they move to the next one as a group.
 
-### Graphics
+### 🎨 Graphics
 
 ```csharp
 container.CornerRadius(8).Background(Colors.Blue);                       // rounded, and the content is clipped
@@ -145,7 +208,7 @@ container.Height(80).Canvas((canvas, width, height) =>
 });
 ```
 
-### QR codes and barcodes
+### 🔳 QR codes and barcodes
 
 ```csharp
 container.Width(90).QrCode("https://example.com/invoice/123");
@@ -155,7 +218,7 @@ container.Height(40).Barcode("PAP-2026-000123");               // Code 128
 
 QR codes use the smallest version that fits and the best mask, and include the quiet zone needed for scanning. The encoder is verified by decoding its output with an independent reader.
 
-### Fillable forms
+### 🧾 Fillable forms
 
 ```csharp
 container.TextField("name").Tooltip("Your full name").Required();
@@ -182,7 +245,7 @@ also take `ReadOnly()`, `Height(...)`, `BackgroundColor(...)` and `BorderColor(.
 in the content of a page: one placed in a header or footer would repeat on every page, which a form
 cannot express, and Papira says so rather than writing a broken file.
 
-### Accessible documents
+### ♿ Accessible documents
 
 ```csharp
 Document.Create(...)
@@ -212,7 +275,7 @@ just a larger font: those three are what separate a file that passes from one th
 CI validates the accessible sample and the form sample against PDF/UA-1 with veraPDF, and PDF/A-3b on
 the same file.
 
-## HTML templates
+## 🌐 HTML templates
 
 ```csharp
 container.Html(html);                                   // markup you have in hand
@@ -223,6 +286,7 @@ container.Html(html, options => options
     .Resource("logo", companyLogo)                      // <img src="logo"> draws this image
     .BaseDirectory("templates")                         // where <img src="..."> is looked for
     .AllowRemoteImages(TimeSpan.FromSeconds(10))        // and pictures from http(s), see below
+    .AllowRemoteStyleSheets()                           // <link rel="stylesheet" href="https://…">
     .Zoom(1.7f));                                       // everything 1.7 times the size
 ```
 
@@ -248,14 +312,16 @@ pictures you allow. What it does cover is what document templates are written in
 | Colours (including `rgba`/`hsla`), backgrounds, borders, `border-radius`, `box-shadow`, margins (they collapse, as CSS says), padding, `box-sizing` | Gradients, `filter` |
 | `width`, `height`, `min-`/`max-` of both, in lengths, percentages, `vh`/`vw` and `calc()` | Percentages of a height that is itself not stated |
 | Fonts, sizes in `px`/`pt`/`em`/`rem`/`%`, weight, style, decoration, letter spacing, line height, `text-transform`, `font-variant-numeric`, `font-feature-settings` | `@font-face`: fonts are the ones Papira knows about |
-| `text-align`, `white-space: pre`, `display: none`, `visibility`, `object-fit`, `transform: scale()`, `page-break-before`/`-after`, `page-break-inside: avoid` | `@media`, `@page`, transforms other than scaling |
+| `text-align`, `white-space: pre`, `display: none`, `visibility`, `object-fit`, `transform: scale()`, `page-break-before`/`-after`, `page-break-inside: avoid` | `@page`, transforms other than scaling |
 | Selectors by tag, class, id, `*`, descendant and child; `:first-child`, `:last-child`, `:nth-child`, `:only-child`, `:not()`; `::before` and `::after` with `content`; the `style` attribute; specificity | Attribute selectors, sibling combinators |
+| `<style>`, the `style` attribute, a sheet passed in the options, and `<link rel="stylesheet">` — beside the markup, as a data URI, or over the network with permission | `@import` |
+| `@media`: `print` and `all` apply and `screen` does not, as when a browser prints; `min-width`/`max-width` are answered with the width of the page | Other media features; `@supports`, `@keyframes` |
 
 Sizes without a unit are CSS pixels, three quarters of a point each. `1em` starts from 12 points unless
 `options.FontSize(...)` says otherwise; text that states no size of its own keeps the style of the
 document around it. A rule whose selector Papira does not understand is skipped rather than guessed at.
 
-### The page number, and pictures from the network
+### 🔢 The page number, and pictures from the network
 
 A footer written as markup can say which page it is on. The names are the ones a browser's own print
 templates use, so a footer written for one reads the same here:
@@ -264,19 +330,24 @@ templates use, so a footer written for one reads the same here:
 page.Footer().Html("<div>Sayfa <span class='pageNumber'></span> / <span class='totalPages'></span></div>");
 ```
 
-`AllowRemoteImages` lets the pictures of a document be fetched over http and https. They are all fetched
+`AllowRemoteImages` and `AllowRemoteStyleSheets` let the pictures and the style sheets of a document be
+fetched over http and https. They are all fetched
 at once, before the document is laid out, so a page of pictures costs one round of waiting; a picture
 that does not arrive is left out and the document is still written. Addresses on the machine itself and
 on its own network are refused unless `allowPrivateNetworks` says otherwise, so that markup from
 elsewhere cannot read what only the machine can reach. Turn it on for markup you trust.
 
-### How close it is to a browser
+### 🔬 How close it is to a browser
 
 Every layout above was compared with what Chrome prints from the same markup, word by word. On a report
 of a kind templates are written as — a header laid out with flexible boxes, a seven-column grid, a
 picture with seventy-two points marked on it, inline boxes, and a table of fifty rows — the words stand
 a tenth of a point apart across the page and a third of a point down it. The widest a word stood from
 where Chrome put it was a point and a quarter across, and three points down.
+
+Content that does not fit behaves as it does in a browser rather than stopping the document: a box wider
+than the space it was given hangs over the edge, a box taller than the page carries on over the next one,
+and a picture that cannot be read is left out. A document is written whatever the markup asks for.
 
 Lines are as tall as a browser makes them, down to the last fraction: text laid out from markup is
 measured the way a browser measures it, with what the font says about its letters rounded to whole screen
@@ -288,11 +359,11 @@ Two differences are worth knowing about:
 - **A character no font of the document can draw is left out.** Browsers reach for any font on the
   machine; Papira draws with the fonts it was given, so that a document comes out the same on a
   developer's machine and in a container with no fonts installed. Name a font that has the character —
-  see [Fallback fonts](#fallback-fonts) — if your templates use symbols such as ✓ or →.
+  see [Fallback fonts](#-fallback-fonts) — if your templates use symbols such as ✓ or →.
 - **Shadows come out a little stronger than Chrome prints them.** Papira draws the shadow the style
   sheet asks for; Chrome's own print output washes it out. On screen, the two agree.
 
-## Archiving, attachments and encryption
+## 🗄 Archiving, attachments and encryption
 
 ```csharp
 Document.Create(Compose)
@@ -321,7 +392,7 @@ Document.Create(Compose)
 
 Encryption uses AES-256 (PDF 2.0, revision 6) and covers every stream and string, including the metadata. Encrypted files cannot be PDF/A.
 
-### Signing
+### ✍ Signing
 
 ```csharp
 using var certificate = X509CertificateLoader.LoadPkcs12FromFile("company.pfx", password);
@@ -349,7 +420,7 @@ and reports it as broken as soon as a single bit of the document is changed.
 A signed document can be PDF/A; it cannot be encrypted. Timestamps from a time-stamping authority are
 not fetched: that would mean talking to a server, which Papira never does.
 
-### Links and bookmarks
+### 🔗 Links and bookmarks
 
 ```csharp
 container.Hyperlink("https://example.com").Text("Visit our website").Underline();
@@ -373,7 +444,7 @@ column.Item().Bookmark("Line items", level: 1).Table(...);
 
 Links must be absolute URIs with a scheme (`https:`, `mailto:`, `tel:` …); `javascript:` and `data:` links are rejected.
 
-### Reusable components
+### ♻ Reusable components
 
 ```csharp
 public sealed class AddressBlock(string title, string address) : IComponent
@@ -388,7 +459,7 @@ public sealed class AddressBlock(string title, string address) : IComponent
 row.RelativeItem().Component(new AddressBlock("Seller", sellerAddress));
 ```
 
-## Right-to-left and cursive text
+## 🔄 Right-to-left and cursive text
 
 Arabic, Hebrew and their neighbours need no setting: the direction of a paragraph is taken from its first
 strongly directional character, exactly as a browser does it.
@@ -428,7 +499,7 @@ container.Text("مرحبا بالعالم").FontFamily("Noto Sans Arabic");
 Papira reads OpenType layout tables (`GSUB`, `GPOS`, `GDEF`). Fonts that shape only through Apple's `morx`
 table — some macOS system fonts, such as Geeza Pro — are drawn unshaped.
 
-## Scripts of India
+## 🪷 Scripts of India
 
 Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam are written in
 syllables, and what is written is not the order the glyphs are drawn in:
@@ -455,7 +526,7 @@ taken from the Unicode Character Database. The output was compared with HarfBuzz
 of a page of real text in all nine scripts came out identical, as did 17,890 of 17,903 lines of generated
 syllables — conjuncts, rephs and reordered vowel signs included.
 
-## Color emoji
+## 😀 Colour emoji
 
 Emoji are drawn in color from the font, whichever way it stores them:
 
@@ -477,7 +548,7 @@ it to do exactly that, through the same rules it uses for cursive scripts. The c
 invisibly underneath, so the text can still be selected and searched. Fonts that compose only through
 Apple's `morx` table — Apple Color Emoji among them — draw each emoji but leave such sequences apart.
 
-## Fonts
+## 🔤 Fonts
 
 ```csharp
 FontManager.RegisterFont("fonts/Inter-Regular.ttf");        // .ttf, .otf or .ttc, all faces
@@ -489,7 +560,7 @@ container.Text("Hello").FontFamily("Inter").SemiBold();
 
 Font families are looked up in this order: fonts you registered, then fonts installed on the machine, then the default Lato. System fonts are indexed once, the first time they're needed. If a family has no bold or italic face, Papira simulates it.
 
-### Fallback fonts
+### 🧩 Fallback fonts
 
 Characters that a font doesn't contain (for example Chinese, Arabic or symbols in a customer name) are taken from fallback fonts, character by character:
 
@@ -507,7 +578,7 @@ Both kinds of outline are supported: TrueType glyphs (`.ttf`, `.ttc`) and Compac
 (`.otf`, and `.ttc` collections that hold them). Either way the font is embedded as a subset holding only
 the glyphs the document uses, with the subroutines the outlines actually call.
 
-## Images
+## 🖼 Images
 
 ```csharp
 var logo = Image.FromFile("logo.png");   // create once, reuse everywhere
@@ -528,7 +599,7 @@ The WebP decoder is Papira's own, for both the lossless and the lossy variant, a
 libwebp on 229 generated pictures of every size and quality: each one came out pixel for pixel identical.
 Animated WebP files are refused, since a page shows one picture.
 
-## SVG drawings
+## ✏ SVG drawings
 
 An SVG is translated into PDF vector operators, so it stays sharp at any size and adds no pixels to the file.
 
@@ -558,7 +629,39 @@ Papira draws the part of SVG that logos, icons and charts are made of:
 raises `InvalidDataException` rather than consuming memory: element count, nesting, path length and reference
 depth are all bounded, and a `DOCTYPE` is skipped instead of resolved.
 
-## Performance tips
+## ⚙ In production
+
+**Threads.** A `Document` describes itself with a delegate that runs again on every generation, so the
+same document may be written as often as you like and from as many threads at once as you like — as long
+as that delegate can be. The font cache, the registry and every other piece of shared state are built for
+it. For many documents at once, give each one `MaxDegreeOfParallelism = 1` and let your own threads do
+the work.
+
+**Containers.** Papira carries the font it draws with, so a scratch image with no fonts installed produces
+the same file as your laptop. CI runs the whole test suite in a container with `/usr/share/fonts` deleted,
+to make sure of it.
+
+**Trimming and Native AOT.** Both are supported and checked on every build: CI publishes the samples as a
+native binary, fails on the first trimming warning, and runs the binary to make sure the documents still
+come out. A native build needs no .NET runtime on the machine and writes its first document in about
+40 ms.
+
+**Untrusted input.** Everything that comes from outside is read defensively: fonts, pictures and markup
+are size-limited, bounded while they are decompressed, and validated before any offset in them is
+followed. Markup is capped in length, in element count and in nesting depth, style sheets in the number
+of rules, and a runaway layout stops at `DocumentSettings.MaxPages`. Nothing is fetched over the network
+unless `HtmlOptions.AllowRemoteImages` or `AllowRemoteStyleSheets` says it may be, and even then
+addresses on the machine's own network are refused unless you allow them.
+
+**Failures.** A document that cannot be built throws `DocumentComposeException`, and one that cannot be
+laid out throws `DocumentLayoutException`. Content that merely does not fit does not throw: a box too
+wide hangs over the edge and one too tall carries on over the page, as a browser lets them, and a picture
+that cannot be read is left out rather than taking the document with it.
+
+**The same file twice.** With a fixed `CreationDate` the same input gives byte-identical output, so a
+document can be cached, compared or checksummed.
+
+## ⚡ Performance tips
 
 - Reuse `Image` instances. Don't load the same file for every document.
 - When you generate many documents in parallel yourself, set `new DocumentSettings { MaxDegreeOfParallelism = 1 }` so each document doesn't also parallelize internally.
@@ -572,7 +675,7 @@ var pdf = Document.Create(Compose)
     .GeneratePdf();
 ```
 
-## Samples
+## 📁 Samples
 
 [`samples/Papira.Samples`](https://github.com/mertgundoganx/Papira/tree/main/samples/Papira.Samples) contains a multi-page invoice, a document that shows every feature, an archivable and an accessible document, a fillable form, a report laid out from an HTML template, and a throughput benchmark:
 
@@ -586,7 +689,7 @@ dotnet run -c Release --project samples/Papira.Samples -- html
 dotnet run -c Release --project samples/Papira.Samples -- bench 5000
 ```
 
-## Limitations
+## 🚧 Limitations
 
 These features are not implemented yet:
 
@@ -600,11 +703,11 @@ These features are not implemented yet:
 
 Contributions are welcome. See the [issues](https://github.com/mertgundoganx/Papira/issues).
 
-## Contributing
+## 🤝 Contributing
 
 See [CONTRIBUTING.md](https://github.com/mertgundoganx/Papira/blob/main/CONTRIBUTING.md) for setup, project layout and guidelines. Please follow the [Code of Conduct](https://github.com/mertgundoganx/Papira/blob/main/CODE_OF_CONDUCT.md). Report security issues privately as described in [SECURITY.md](https://github.com/mertgundoganx/Papira/blob/main/SECURITY.md).
 
-## License
+## 📄 License
 
 Papira is licensed under the [MIT License](https://github.com/mertgundoganx/Papira/blob/main/LICENSE).
 

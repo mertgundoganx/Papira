@@ -51,6 +51,7 @@ internal sealed partial class HtmlComposer
             RowGap = rowGap,
             ColumnGap = columnGap,
             MainSizeFixed = direction is FlexDirection.Row or FlexDirection.RowReverse || box.Height != null,
+            CrossSizeFixed = direction is FlexDirection.Row or FlexDirection.RowReverse ? box.Height != null : box.Width != null,
         };
 
         var horizontal = direction is FlexDirection.Row or FlexDirection.RowReverse;
@@ -123,11 +124,16 @@ internal sealed partial class HtmlComposer
             // Without a basis of its own an item starts from the size it was given along the line, and that
             // size is then the flexible box's to change — so it is taken off the box around the item.
             var stated = horizontal ? box.Width : box.Height;
+            var auto = HtmlValues.AutoMargins(declarations);
             var item = new FlexItem
             {
                 Grow = grow,
                 Shrink = shrink,
                 Basis = basis ?? stated,
+                MinMain = horizontal ? box.MinWidth : box.MinHeight,
+                MaxMain = horizontal ? box.MaxWidth : box.MaxHeight,
+                AutoBefore = horizontal ? auto.Left : auto.Top,
+                AutoAfter = horizontal ? auto.Right : auto.Bottom,
                 Edges = horizontal
                     ? box.Padding.Left + box.Padding.Right + box.Border.Left + box.Border.Right
                     : box.Padding.Top + box.Padding.Bottom + box.Border.Top + box.Border.Bottom,

@@ -1,5 +1,6 @@
 namespace Papira;
 
+/// <summary>How hard Papira works to make the file small.</summary>
 public enum PdfCompression
 {
     /// <summary>No compression; largest files, lowest CPU cost.</summary>
@@ -28,6 +29,10 @@ public enum PdfStandard
     PdfA3b,
 }
 
+/// <summary>
+/// What the file is, beyond what it says: which standard it conforms to, whether it is signed, locked,
+/// or written with its structure beside it, and how much work goes into making it small.
+/// </summary>
 public sealed record DocumentSettings
 {
     /// <summary>
@@ -73,6 +78,10 @@ public sealed record DocumentSettings
     } = 100_000;
 }
 
+/// <summary>
+/// What the file says about itself: the title and author a reader shows, and the language a reader for
+/// the blind needs in order to pronounce the text.
+/// </summary>
 public sealed record DocumentMetadata
 {
     public string? Title { get; init; }

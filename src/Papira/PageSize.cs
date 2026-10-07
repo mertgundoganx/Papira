@@ -7,6 +7,7 @@ public readonly record struct PageSize(float Width, float Height)
     public PageSize Portrait() => Width <= Height ? this : new PageSize(Height, Width);
 }
 
+/// <summary>The page sizes a document is usually printed on, in points.</summary>
 public static class PageSizes
 {
     public static readonly PageSize A3 = new(841.89f, 1190.55f);

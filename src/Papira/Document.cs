@@ -4,9 +4,20 @@ using Papira.Rendering;
 namespace Papira;
 
 /// <summary>
-/// A PDF document definition. The compose delegate is invoked on every generation, so a <see cref="Document"/>
-/// can be generated many times, and different documents can be generated concurrently from multiple threads.
+/// A document waiting to be written. What it holds is described by a delegate rather than built once, and
+/// that delegate runs again on every generation — so the same document may be written as often as you
+/// like, and from as many threads at once as you like, as long as the delegate itself can be run that way.
+/// Nothing is written until one of the <c>GeneratePdf</c> methods is called.
 /// </summary>
+/// <example>
+/// <code>
+/// var pdf = Document.Create(document => document.Page(page =>
+/// {
+///     page.Size(PageSizes.A4).Margin(40);
+///     page.Content().Text("Merhaba");
+/// })).GeneratePdf();
+/// </code>
+/// </example>
 public sealed class Document
 {
     private readonly Action<DocumentDescriptor> _compose;
@@ -16,9 +27,11 @@ public sealed class Document
 
     private Document(Action<DocumentDescriptor> compose) => _compose = compose;
 
+    /// <summary>Describes a document. The delegate runs again every time the document is written.</summary>
     public static Document Create(Action<DocumentDescriptor> compose) =>
         new(compose ?? throw new ArgumentNullException(nameof(compose)));
 
+    /// <summary>What the file says about itself: its title, its author, the language it is written in.</summary>
     public Document WithMetadata(DocumentMetadata metadata)
     {
         _metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
@@ -40,12 +53,16 @@ public sealed class Document
     public Document WithAttachment(string fileName, byte[] data, string mediaType = "application/octet-stream") =>
         WithAttachment(new DocumentAttachment(fileName, data) { MediaType = mediaType });
 
+    /// <summary>What the file is: the standard it conforms to, whether it is signed, locked or tagged.</summary>
     public Document WithSettings(DocumentSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         return this;
     }
 
+    /// <summary>Writes the document and gives back the bytes of the file.</summary>
+    /// <exception cref="DocumentComposeException">The document is described in a way that cannot be built.</exception>
+    /// <exception cref="DocumentLayoutException">The content cannot be laid out on the pages it was given.</exception>
     public byte[] GeneratePdf()
     {
         using var stream = new MemoryStream();
@@ -53,12 +70,18 @@ public sealed class Document
         return stream.ToArray();
     }
 
+    /// <summary>Writes the document to a file, replacing whatever was there.</summary>
+    /// <exception cref="DocumentComposeException">The document is described in a way that cannot be built.</exception>
+    /// <exception cref="DocumentLayoutException">The content cannot be laid out on the pages it was given.</exception>
     public void GeneratePdf(string path)
     {
         using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
         GeneratePdf(stream);
     }
 
+    /// <summary>Writes the document to <paramref name="stream"/>, which is not closed.</summary>
+    /// <exception cref="DocumentComposeException">The document is described in a way that cannot be built.</exception>
+    /// <exception cref="DocumentLayoutException">The content cannot be laid out on the pages it was given.</exception>
     public void GeneratePdf(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
@@ -71,6 +94,9 @@ public sealed class Document
     }
 }
 
+/// <summary>
+/// The document being described: the pages it holds and the text style they start from.
+/// </summary>
 public sealed class DocumentDescriptor
 {
     internal List<PageDescriptor> Pages { get; } = [];
@@ -98,6 +124,11 @@ public sealed class DocumentDescriptor
     }
 }
 
+/// <summary>
+/// One page of a document, or rather one run of them: its size and margins, the content that flows
+/// through as many pages as it needs, and the header, footer, background and foreground that are drawn
+/// on each of them.
+/// </summary>
 public sealed class PageDescriptor
 {
     internal PageSize PageSize { get; private set; } = PageSizes.A4;

@@ -34,8 +34,10 @@ internal sealed class PaddingElement : ContainerElement
 
     internal override SpacePlan Measure(Size available, LayoutContext context)
     {
+        // Padding wider than the space leaves nothing for the content, which overflows rather than
+        // moving to a page where it would not fit either.
         var edges = Edges(available, context);
-        if (Left + Right > available.Width + Size.Epsilon || edges.Top + edges.Bottom > available.Height + Size.Epsilon)
+        if (edges.Top + edges.Bottom > available.Height + Size.Epsilon)
             return SpacePlan.Wrap;
 
         var plan = Child.Measure(Inner(available, edges), context);
@@ -134,6 +136,16 @@ internal sealed class ConstrainedElement : ContainerElement
     private bool _drawn;
 
     /// <summary>
+    /// Whether a box taller than the page has left carries on over the next one. A box of markup does,
+    /// as it does in a browser; one built with the fluent API moves to the next page as a whole, which
+    /// is what someone who asks for a box of a given height means by it.
+    /// </summary>
+    public bool Splits;
+
+    /// <summary>How much of a stated height has already been drawn, on the pages the box began on.</summary>
+    private float _used;
+
+    /// <summary>
     /// The smallest and largest size the element may take, in points. A size it asks for is held inside
     /// the largest and then inside the smallest, which is the order CSS resolves the three in.
     /// </summary>
@@ -156,40 +168,63 @@ internal sealed class ConstrainedElement : ContainerElement
 
     private readonly record struct Limits((float Min, float Max) Horizontal, (float Min, float Max) Vertical)
     {
-        public Size Inner(Size available) =>
-            new(Math.Min(available.Width, Horizontal.Max), Math.Min(available.Height, Vertical.Max));
-
         public bool Sized => Horizontal.Min > 0 || Vertical.Min > 0;
     }
+
+    /// <summary>
+    /// The space the content is given on this page: no wider than the box may be, and no taller than what
+    /// is left of the box here. A box taller than the page it begins on carries on over the next, which is
+    /// what a browser does with one; the part drawn so far is remembered.
+    /// </summary>
+    private Size Inner(Size available, in Limits limits) => new(
+        Math.Min(available.Width, limits.Horizontal.Max),
+        Math.Min(available.Height, Math.Max(0, limits.Vertical.Max - _used)));
 
     internal override SpacePlan Measure(Size available, LayoutContext context)
     {
         var limits = Resolve(available, context);
-        if (limits.Horizontal.Min > available.Width + Size.Epsilon || limits.Vertical.Min > available.Height + Size.Epsilon)
+        var wanted = Math.Max(0, limits.Vertical.Min - _used);
+
+        // A box as tall as it was told to be, where that is taller than the page has left, fills what is
+        // left and carries on over the page. A box wider than the space it was given overflows it, as it
+        // does in a browser, rather than being moved to a page where it would not fit either.
+        var continues = wanted > available.Height + Size.Epsilon;
+        if (continues && !Splits)
             return SpacePlan.Wrap;
 
-        var plan = Child.Measure(limits.Inner(available), context);
-        if (plan.IsWrap)
+        var inner = Inner(available, limits);
+        var plan = Child.Measure(inner, context);
+        if (plan.IsWrap && !continues)
             return plan;
 
-        if (plan.IsEmpty)
-            return !_drawn && limits.Sized ? SpacePlan.Full(limits.Horizontal.Min, limits.Vertical.Min) : plan;
+        var width = Math.Max(plan.HasContent ? plan.Width : 0, limits.Horizontal.Min);
+        if (continues)
+            return SpacePlan.Partial(width, available.Height);
 
-        return plan with
+        // What the box holds may be over while the box itself is not: the rest of a box that carries on
+        // over a page is still part of the page, and still shows its background and its border.
+        if (plan.IsEmpty)
         {
-            Width = Math.Max(plan.Width, limits.Horizontal.Min),
-            Height = Math.Max(plan.Height, limits.Vertical.Min),
-        };
+            if (wanted > 0)
+                return SpacePlan.Full(width, wanted);
+
+            return !_drawn && limits.Sized ? SpacePlan.Full(limits.Horizontal.Min, 0) : plan;
+        }
+
+        return plan with { Width = width, Height = Math.Max(plan.Height, wanted) };
     }
 
     internal override void Draw(Size available, LayoutContext context)
     {
         var limits = Resolve(available, context);
-        var inner = limits.Inner(available);
+        var wanted = Math.Max(0, limits.Vertical.Min - _used);
+        var inner = Inner(available, limits);
 
-        // A fixed-size box without content (e.g. Height(20).Background(...)) still shows its decorations.
-        var isSizedBox = !_drawn && limits.Sized && Child.Measure(inner, context).IsEmpty;
+        // A box without content (e.g. Height(20).Background(...)), or the rest of one that carries on over
+        // a page, still shows its decorations.
+        var isSizedBox = (wanted > 0 || !_drawn) && limits.Sized && Child.Measure(inner, context).IsEmpty;
         _drawn = true;
+        _used += Math.Min(wanted, available.Height);
 
         var previous = context.DrawEmptyDecorations;
         context.DrawEmptyDecorations |= isSizedBox;
@@ -197,12 +232,16 @@ internal sealed class ConstrainedElement : ContainerElement
         context.DrawEmptyDecorations = previous;
     }
 
-    internal override float? FirstBaseline(Size available, LayoutContext context) =>
-        Child.FirstBaseline(Resolve(available, context).Inner(available), context);
+    internal override float? FirstBaseline(Size available, LayoutContext context)
+    {
+        var limits = Resolve(available, context);
+        return Child.FirstBaseline(Inner(available, limits), context);
+    }
 
     internal override void Reset()
     {
         _drawn = false;
+        _used = 0;
         base.Reset();
     }
 }

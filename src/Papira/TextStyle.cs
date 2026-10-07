@@ -1,5 +1,6 @@
 namespace Papira;
 
+/// <summary>How heavy the letters are, from the lightest face of a family to the heaviest.</summary>
 public enum FontWeight
 {
     Thin = 100,

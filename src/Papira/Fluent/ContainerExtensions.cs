@@ -10,6 +10,11 @@ public interface IComponent
     void Compose(IContainer container);
 }
 
+/// <summary>
+/// Everything a container can be given: space around its content, a background, a border, a size, a
+/// place on the page, and the content itself. Each call wraps what came before it, so they read in the
+/// order they are written — <c>container.Padding(10).Background(Colors.White).Text("…")</c>.
+/// </summary>
 public static class ContainerExtensions
 {
     internal static T Assign<T>(this IContainer container, T element) where T : Element

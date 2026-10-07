@@ -136,6 +136,28 @@ public class HtmlLayoutTests
     }
 
     [Fact]
+    public void An_item_is_never_wider_than_it_says_it_may_be()
+    {
+        var pdf = Html(
+            "<div style='display:flex'>" +
+            "<div style='width:100%;max-width:84pt'>dar</div><div>sonraki</div></div>");
+
+        // The first item asks for the whole line and is held to 84 points, so the next one starts there.
+        Assert.Equal(124, Place(pdf, "sonraki").X, 1);
+    }
+
+    [Fact]
+    public void A_margin_told_to_take_what_is_left_pushes_an_item_across()
+    {
+        var pdf = Html(
+            "<div style='display:flex'>" +
+            "<div>solda</div><div style='margin-left:auto'>sagda</div></div>");
+
+        Assert.Equal(40, Place(pdf, "solda").X, 1);
+        Assert.True(Place(pdf, "sagda").X > 40 + (Content * 0.8f), "the second item is pushed to the right edge");
+    }
+
+    [Fact]
     public void The_gap_stands_between_the_items()
     {
         var tight = Html("<div style='display:flex'><div>bir</div><div>iki</div></div>");
@@ -275,6 +297,19 @@ public class HtmlLayoutTests
 
         Assert.Equal(240, Place(pdf, "kose").X, 1);
         Assert.Equal(40, Place(pdf, "akis").X, 1);
+    }
+
+    [Fact]
+    public void An_element_placed_against_one_side_is_as_wide_as_what_it_holds()
+    {
+        var pdf = Html(
+            "<div style='position:relative;width:400pt;height:60pt'>" +
+            "<span style='display:flex;align-items:center;position:absolute;right:0;top:0;" +
+            "padding:0 8pt;height:20pt;background:#eeeeee'>Sayfa 1 / 1</span></div>");
+
+        // The label hugs its words in the corner instead of spanning the whole box.
+        var (x, _) = Place(pdf, "Sayfa");
+        Assert.True(x > 40 + 300, $"the label is held to the right edge, but its text starts at {x}");
     }
 
     [Fact]
@@ -639,6 +674,117 @@ public class HtmlLayoutTests
         Assert.Equal(Place(plain, "bir").Y - 4, Place(bordered, "bir").Y, 1);
     }
 
+    // ---- what a page does with content that does not fit ----
+
+    [Fact]
+    public void A_box_wider_than_the_space_overflows_it()
+    {
+        // Without box-sizing the padding is added to the width, so the box is wider than what holds it.
+        // A browser lets it hang over the edge; it must not stop the document being written.
+        var pdf = Html("<div style='display:flex; width:100%; padding:8pt'>tasan kutu</div>");
+
+        Assert.Equal(1, pdf.PageCount);
+        Assert.Equal(48, Place(pdf, "tasan").X, 1);
+    }
+
+    [Fact]
+    public void A_box_taller_than_the_page_carries_on_over_it()
+    {
+        var pdf = Html("<div style='height:1500pt;background:#eeeeee'>uzun kutu</div><p>sonra</p>");
+
+        Assert.True(pdf.PageCount >= 2, $"the box spans more than one page, but the document has {pdf.PageCount}");
+        Assert.Contains("sonra", pdf.ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Boxes_as_tall_as_a_page_leave_no_page_empty()
+    {
+        // Four boxes, each a little over half a page: a browser cuts them where the page ends rather
+        // than moving a whole box to the next page and leaving the rest of this one empty.
+        var boxes = string.Concat(Enumerable.Range(0, 4).Select(i => $"<div style='height:430pt'>kutu {i}</div>"));
+        var pdf = Html(boxes);
+
+        Assert.Equal(3, pdf.PageCount);
+        for (var i = 0; i < 4; i++)
+            Assert.Contains($"kutu {i}", pdf.ExtractText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_box_built_with_the_fluent_api_moves_to_the_next_page_as_a_whole()
+    {
+        // What markup asks for and what someone writing C# asks for are not the same: a box given a
+        // height in the fluent API is meant to stay whole.
+        var pdf = Inspect(Generate(c => c.Column(column =>
+        {
+            column.Item().Height(500).Background(Colors.Grey.Lighten2);
+            column.Item().Height(500).Background(Colors.Grey.Lighten3);
+        })));
+
+        Assert.Equal(2, pdf.PageCount);
+    }
+
+    // ---- style sheets the document links to ----
+
+    [Fact]
+    public void A_style_sheet_the_document_links_to_is_read()
+    {
+        var pdf = Html(
+            "<link rel=\"stylesheet\" href=\"data:text/css,p{color:%23ff0000}\">" +
+            "<p>kirmizi</p>");
+
+        Assert.Contains("1 0 0 rg", pdf.PageContents()[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_style_sheet_beside_the_markup_is_read()
+    {
+        var folder = Directory.CreateTempSubdirectory("papira");
+        try
+        {
+            File.WriteAllText(Path.Combine(folder.FullName, "site.css"), "p { color: #ff0000 }");
+            var pdf = Inspect(Generate(c => c.Html(
+                "<link rel='stylesheet' href='site.css'><p>kirmizi</p>",
+                o => o.BaseDirectory(folder.FullName))));
+
+            Assert.Contains("1 0 0 rg", pdf.PageContents()[0], StringComparison.Ordinal);
+        }
+        finally
+        {
+            folder.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void A_style_sheet_that_cannot_be_read_leaves_the_document_whole()
+    {
+        var pdf = Html("<link rel='stylesheet' href='yok.css'><link rel='stylesheet' href='https://example.invalid/b.css'><p>metin</p>");
+
+        Assert.Equal("metin\n", pdf.ExtractText());
+    }
+
+    [Fact]
+    public void Rules_meant_for_a_screen_are_not_given_to_a_page()
+    {
+        var pdf = Html(
+            "<style>@media screen { p { color: #00ff00 } .inner { color: #00ff00 } }" +
+            "@media print { p { color: #ff0000 } }</style>" +
+            "<p>yazdirma</p><p class='inner'>icerideki</p>");
+
+        // The rules inside a block meant for a screen are not applied either, block and all.
+        Assert.DoesNotContain("0 1 0 rg", pdf.PageContents()[0], StringComparison.Ordinal);
+        Assert.Contains("1 0 0 rg", pdf.PageContents()[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_rule_may_ask_how_wide_the_page_is()
+    {
+        var wide = Html("<style>@media (min-width: 400px) { p { color: #ff0000 } }</style><p>metin</p>");
+        var narrow = Html("<style>@media (min-width: 2000px) { p { color: #ff0000 } }</style><p>metin</p>");
+
+        Assert.Contains("1 0 0 rg", wide.PageContents()[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("1 0 0 rg", narrow.PageContents()[0], StringComparison.Ordinal);
+    }
+
     // ---- shadows ----
 
     [Fact]
@@ -752,10 +898,21 @@ public class HtmlLayoutTests
     [Fact]
     public void A_picture_is_only_fetched_over_the_network_once_it_may_be()
     {
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            Generate(c => c.Html("<img src='https://example.invalid/logo.png'>")));
+        // Nothing is fetched until the document says it may be, and the picture is simply left out.
+        var pdf = Html("<p>once</p><img src='https://example.invalid/logo.png'><p>sonra</p>");
 
-        Assert.Contains("AllowRemoteImages", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(Pictures(pdf));
+        Assert.Equal("once\nsonra\n", pdf.ExtractText());
+    }
+
+    [Fact]
+    public void A_picture_whose_address_leads_nowhere_leaves_the_document_whole()
+    {
+        // The address of a picture is often data, and data is often wrong.
+        var pdf = Html("<p>once</p><img src='yok.jpg'><img src=''><img src='../disarida.png'><p>sonra</p>");
+
+        Assert.Empty(Pictures(pdf));
+        Assert.Equal("once\nsonra\n", pdf.ExtractText());
     }
 
     [Fact]
@@ -799,12 +956,28 @@ public class HtmlLayoutTests
         Assert.Empty(Pictures(pdf));
     }
 
-    /// <summary>A web server on the machine itself, which the tests fetch a picture from.</summary>
+    [Fact]
+    public void A_style_sheet_is_fetched_over_the_network_once_it_may_be()
+    {
+        using var server = new Server(System.Text.Encoding.UTF8.GetBytes("p { color: #ff0000 }"), "text/css");
+        if (!server.Started)
+            return; // the machine does not allow listening on a port
+
+        var refused = Html($"<link rel='stylesheet' href='{server.Address}site.css'><p>metin</p>");
+        var allowed = Html(
+            $"<link rel='stylesheet' href='{server.Address}site.css'><p>metin</p>",
+            options => options.AllowRemoteStyleSheets(TimeSpan.FromSeconds(5), allowPrivateNetworks: true));
+
+        Assert.DoesNotContain("1 0 0 rg", refused.PageContents()[0], StringComparison.Ordinal);
+        Assert.Contains("1 0 0 rg", allowed.PageContents()[0], StringComparison.Ordinal);
+    }
+
+    /// <summary>A web server on the machine itself, which the tests fetch a picture or a sheet from.</summary>
     private sealed class Server : IDisposable
     {
         private readonly HttpListener? _listener;
 
-        public Server(byte[] payload)
+        public Server(byte[] payload, string mediaType = "image/png")
         {
             for (var port = 8731; port < 8741 && _listener == null; port++)
             {
@@ -832,7 +1005,7 @@ public class HtmlLayoutTests
                     while (_listener.IsListening)
                     {
                         var context = await _listener.GetContextAsync().ConfigureAwait(false);
-                        context.Response.ContentType = "image/png";
+                        context.Response.ContentType = mediaType;
                         context.Response.ContentLength64 = payload.Length;
                         await context.Response.OutputStream.WriteAsync(payload).ConfigureAwait(false);
                         context.Response.Close();

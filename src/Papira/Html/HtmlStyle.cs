@@ -431,6 +431,38 @@ internal static class HtmlValues
     /// needs, so that is the one transform a printed document takes from the markup.
     /// </summary>
     /// <summary>
+    /// Which of the margins are told to take whatever room is left. They may be written out one at a
+    /// time or stand in the shorthand, where the sides a list of one to four values stands for are the
+    /// ones CSS says.
+    /// </summary>
+    public static (bool Left, bool Top, bool Right, bool Bottom) AutoMargins(Dictionary<string, string> declarations)
+    {
+        bool?[] sides = [Side("margin-left"), Side("margin-top"), Side("margin-right"), Side("margin-bottom")];
+        if (declarations.TryGetValue("margin", out var shorthand))
+        {
+            var parts = shorthand.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            string?[] fromShorthand = parts.Length switch
+            {
+                1 => [parts[0], parts[0], parts[0], parts[0]],
+                2 => [parts[1], parts[0], parts[1], parts[0]],
+                3 => [parts[1], parts[0], parts[1], parts[2]],
+                >= 4 => [parts[3], parts[0], parts[1], parts[2]],
+                _ => [null, null, null, null],
+            };
+
+            for (var i = 0; i < 4; i++)
+                sides[i] ??= Auto(fromShorthand[i]);
+        }
+
+        return (sides[0] == true, sides[1] == true, sides[2] == true, sides[3] == true);
+
+        bool? Side(string property) => declarations.TryGetValue(property, out var value) ? Auto(value) : null;
+
+        static bool? Auto(string? value) =>
+            value == null ? null : value.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// The shadows a <c>box-shadow</c> states: how far each is moved, how far it is blurred, how much
     /// larger than the box it is cast, and in what colour. A shadow cast inside the box (<c>inset</c>)
     /// is left out rather than drawn as an outer one, which would be worse than not drawing it.
