@@ -31,13 +31,18 @@ internal sealed partial class HtmlComposer(HtmlOptions options)
 
     public void Compose(IContainer container, HtmlNode root)
     {
+        // How wide the page is settles which of a style sheet's rules apply to it; a document drawn
+        // larger is laid out in a page that much narrower, so the zoom is part of the answer.
+        _sheet.MediaWidth = options.Width / options.ZoomFactor * 4 / 3;
+
         foreach (var css in options.StyleSheets)
             _sheet.Add(css);
 
-        CollectStyles(root);
-
+        // Everything the document points at is fetched at once, before any of it is read.
         if (options.Remote is { } remote)
-            remote.Fetch(Sources(root));
+            remote.Fetch([.. Sources(root), .. Links(root)]);
+
+        CollectStyles(root);
 
         var body = Find(root, "body") ?? root;
         var style = new HtmlStyle
@@ -77,8 +82,36 @@ internal sealed partial class HtmlComposer(HtmlOptions options)
             return;
         }
 
+        // A sheet the document links to is read where it stands, so that what it says and what the
+        // document says itself are weighed in the order they were written.
+        if (IsStyleSheet(node) && options.LoadStyleSheet(node.Attribute("href")) is { } linked)
+            _sheet.Add(linked);
+
         foreach (var child in node.Children)
             CollectStyles(child);
+    }
+
+    /// <summary>True for a &lt;link&gt; that names a style sheet.</summary>
+    private static bool IsStyleSheet(HtmlNode node) =>
+        node.Tag == "link" &&
+        node.Attribute("rel") is { Length: > 0 } rel &&
+        rel.Contains("stylesheet", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The style sheets the document links to, so that they can all be fetched at once.</summary>
+    private static List<string> Links(HtmlNode node)
+    {
+        var links = new List<string>();
+        Collect(node);
+        return links;
+
+        void Collect(HtmlNode current)
+        {
+            if (IsStyleSheet(current) && current.Attribute("href") is { Length: > 0 } href)
+                links.Add(href);
+
+            foreach (var child in current.Children)
+                Collect(child);
+        }
     }
 
     /// <summary>Every picture the document points at, so that they can all be fetched at once.</summary>
@@ -492,11 +525,21 @@ internal sealed partial class HtmlComposer(HtmlOptions options)
     /// What the element says about its own size. A width stands for both a smallest and a largest size, and
     /// is itself held inside <c>max-width</c> where there is one, as CSS resolves the three against each other.
     /// </summary>
-    private static IContainer Sizing(IContainer container, in HtmlBox box) =>
-        box.Width == null && box.Height == null && box.MinWidth == null && box.MaxWidth == null &&
-        box.MinHeight == null && box.MaxHeight == null
-            ? container
-            : container.Constrain(box.Width, box.MinWidth, box.MaxWidth, box.Height, box.MinHeight, box.MaxHeight);
+    private static IContainer Sizing(IContainer container, in HtmlBox box)
+    {
+        if (box.Width == null && box.Height == null && box.MinWidth == null && box.MaxWidth == null &&
+            box.MinHeight == null && box.MaxHeight == null)
+        {
+            return container;
+        }
+
+        var element = container.Constrain(box.Width, box.MinWidth, box.MaxWidth, box.Height, box.MinHeight, box.MaxHeight);
+
+        // A box of markup that is taller than the page has left carries on over the next one, as a
+        // browser lays it out, rather than leaving the rest of the page empty.
+        element.Splits = true;
+        return element;
+    }
 
     // ---- text ----
 

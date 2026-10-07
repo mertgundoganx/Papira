@@ -20,14 +20,22 @@ internal sealed class StyleSheet
 {
     private const int MaxRules = 4096;
     private const int MaxParts = 8;
+    private const int MaxNesting = 4;
 
     private readonly List<Rule> _rules = [];
 
     public bool IsEmpty => _rules.Count == 0;
 
-    public void Add(string css)
+    /// <summary>
+    /// The width of the page the rules are read for, in CSS pixels. A style sheet may say that some of
+    /// its rules only apply to a page of a certain width, and a page 595 points across is 794 of them.
+    /// </summary>
+    public float MediaWidth { get; set; } = 794;
+
+    public void Add(string css) => Add(RemoveComments(css), depth: 0);
+
+    private void Add(string text, int depth)
     {
-        var text = RemoveComments(css);
         var index = 0;
         while (index < text.Length && _rules.Count < MaxRules)
         {
@@ -41,10 +49,17 @@ internal sealed class StyleSheet
 
             var selectors = text[index..open];
 
-            // An at-rule (@media, @font-face) brings its own block, which is skipped whole.
+            // An at-rule brings a block of its own. @media says when the rules inside it apply, and is
+            // read where they apply to a printed page of this width; the rest — @font-face, @keyframes,
+            // @supports — brings nothing a page needs, so the whole of it is stepped over. The block is
+            // found by counting its brackets: the first closing one may belong to a rule inside it.
             if (selectors.Contains('@', StringComparison.Ordinal))
             {
-                index = close + 1;
+                var end = BlockEnd(text, open);
+                if (depth < MaxNesting && Applies(selectors))
+                    Add(text[(open + 1)..end], depth + 1);
+
+                index = end + 1;
                 continue;
             }
 
@@ -84,6 +99,99 @@ internal sealed class StyleSheet
         {
             foreach (var declaration in rule.Declarations)
                 into[declaration.Key] = declaration.Value;
+        }
+    }
+
+    /// <summary>Where the block that opens at <paramref name="open"/> ends, counting the brackets inside it.</summary>
+    private static int BlockEnd(string text, int open)
+    {
+        var depth = 0;
+        for (var i = open; i < text.Length; i++)
+        {
+            if (text[i] == '{')
+                depth++;
+            else if (text[i] == '}' && --depth == 0)
+                return i;
+        }
+
+        return text.Length - 1;
+    }
+
+    /// <summary>
+    /// Whether the rules of an at-rule apply to the page. A printed page is given what <c>print</c> and
+    /// <c>all</c> ask for and not what <c>screen</c> does, as a browser does when it prints, and a query
+    /// about how wide the page is is answered with how wide it is. A query Papira cannot read does not
+    /// apply, so a rule is never used where it was not meant to be.
+    /// </summary>
+    private bool Applies(string rule)
+    {
+        var at = rule.IndexOf('@');
+        var text = rule[at..].Trim();
+        if (!text.StartsWith("@media", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var query = text["@media".Length..].Trim();
+        if (query.Length == 0)
+            return true;
+
+        // Several queries separated by commas: the rules apply where any one of them does.
+        foreach (var alternative in query.Split(','))
+        {
+            if (Matches(alternative))
+                return true;
+        }
+
+        return false;
+
+        bool Matches(string alternative)
+        {
+            var words = alternative.Replace("only ", " ", StringComparison.OrdinalIgnoreCase).Split(
+                [" and ", " AND "],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (words.Length == 0)
+                return false;
+
+            foreach (var word in words)
+            {
+                var piece = word.Trim().ToLowerInvariant();
+                if (piece is "print" or "all")
+                    continue;
+
+                if (piece is "screen" or "speech" or "tty" || piece.StartsWith("not", StringComparison.Ordinal))
+                    return false;
+
+                if (!piece.StartsWith('(') || !Feature(piece.Trim('(', ')')))
+                    return false;
+            }
+
+            return true;
+        }
+
+        bool Feature(string feature)
+        {
+            var colon = feature.IndexOf(':');
+            if (colon < 0)
+                return false;
+
+            var name = feature[..colon].Trim();
+            var value = feature[(colon + 1)..].Trim();
+            if (name is "orientation")
+                return value == "portrait";
+
+            if (name is not ("min-width" or "max-width" or "min-device-width" or "max-device-width"))
+                return false;
+
+            var scanner = new Papira.Svg.SvgScanner(value);
+            if (!scanner.TryReadNumber(out var number))
+                return false;
+
+            // Everything but a count of pixels is turned into one: a page is measured in them here.
+            var pixels = value.EndsWith("em", StringComparison.Ordinal) ? number * 16
+                : value.EndsWith("pt", StringComparison.Ordinal) ? number * 4 / 3
+                : number;
+
+            return name.StartsWith("min", StringComparison.Ordinal) ? MediaWidth >= pixels : MediaWidth <= pixels;
         }
     }
 

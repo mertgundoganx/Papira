@@ -26,6 +26,9 @@ public sealed class HtmlOptions
 
     internal float ZoomFactor { get; private set; } = 1;
 
+    /// <summary>How wide the page is, which is what a style sheet's "@media (min-width: …)" is answered with.</summary>
+    internal float Width { get; private set; } = 595.28f;
+
     internal Papira.Html.RemoteImages? Remote { get; private set; }
 
     internal string? FontFamily { get; private set; }
@@ -58,13 +61,48 @@ public sealed class HtmlOptions
     /// <param name="allowPrivateNetworks">Whether addresses inside the machine's own network may be fetched.</param>
     public HtmlOptions AllowRemoteImages(TimeSpan? timeout = null, int maximumBytes = 16 * 1024 * 1024, bool allowPrivateNetworks = false)
     {
+        Fetcher(timeout, maximumBytes, allowPrivateNetworks).Images = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Lets the style sheets a document links to be fetched over http and https, as
+    /// <see cref="AllowRemoteImages"/> lets its pictures be. A sheet that does not arrive is left out and
+    /// the document is laid out without it. Turn this on for markup you trust.
+    /// </summary>
+    /// <param name="timeout">How long one sheet may take. Default: ten seconds.</param>
+    /// <param name="maximumBytes">How large one sheet may be. Default: 4 MB.</param>
+    /// <param name="allowPrivateNetworks">Whether addresses inside the machine's own network may be fetched.</param>
+    public HtmlOptions AllowRemoteStyleSheets(TimeSpan? timeout = null, int maximumBytes = 4 * 1024 * 1024, bool allowPrivateNetworks = false)
+    {
+        Fetcher(timeout, maximumBytes, allowPrivateNetworks).Styles = true;
+        return this;
+    }
+
+    /// <summary>
+    /// How wide the page the markup is laid out on is, in points. A style sheet may say that some of its
+    /// rules only apply to a page of a certain width, and this is what such a rule is answered with; the
+    /// zoom is taken into account by itself. Default: the width of an A4 page.
+    /// </summary>
+    public HtmlOptions PageWidth(float points)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(points);
+        Width = points;
+        return this;
+    }
+
+    private Papira.Html.RemoteImages Fetcher(TimeSpan? timeout, int maximumBytes, bool allowPrivateNetworks)
+    {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumBytes);
         var wait = timeout ?? TimeSpan.FromSeconds(10);
         if (wait <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout), "The timeout must be positive.");
 
-        Remote = new Papira.Html.RemoteImages(wait, maximumBytes, allowPrivateNetworks);
-        return this;
+        return Remote = new Papira.Html.RemoteImages(wait, maximumBytes, allowPrivateNetworks)
+        {
+            Images = Remote?.Images ?? false,
+            Styles = Remote?.Styles ?? false,
+        };
     }
 
     /// <summary>
@@ -142,6 +180,37 @@ public sealed class HtmlOptions
         return this;
     }
 
+    /// <summary>How large a style sheet beside the markup may be.</summary>
+    private const int MaximumStyleSheet = 8 * 1024 * 1024;
+
+    /// <summary>
+    /// The style sheet a document links to: a file beside the markup, a data URI, or one fetched over
+    /// the network where the document says it may be. Null where there is none to be had, which lays
+    /// the document out without it rather than not at all.
+    /// </summary>
+    internal string? LoadStyleSheet(string? href)
+    {
+        if (string.IsNullOrWhiteSpace(href))
+            return null;
+
+        return Read<string>(() =>
+        {
+            if (TryDataUri(href, out _, out var data))
+                return System.Text.Encoding.UTF8.GetString(data);
+
+            if (Papira.Html.RemoteImages.IsRemote(href))
+            {
+                return Remote is { Styles: true } remote && remote.Get(href) is { } fetched
+                    ? System.Text.Encoding.UTF8.GetString(fetched).TrimStart('\uFEFF')
+                    : null;
+            }
+
+            return Path(href) is { } path && new FileInfo(path) is { Exists: true, Length: <= MaximumStyleSheet }
+                ? File.ReadAllText(path)
+                : null;
+        });
+    }
+
     /// <summary>The drawing a picture source refers to, if it is a vector drawing.</summary>
     internal SvgImage? LoadSvg(string source)
     {
@@ -158,20 +227,25 @@ public sealed class HtmlOptions
         if (_resources.TryGetValue(source, out var registered))
             return registered as SvgImage;
 
-        if (TryDataUri(source, out var mediaType, out var data))
-            return mediaType.Contains("svg", StringComparison.OrdinalIgnoreCase) ? SvgImage.FromBytes(data) : null;
+        return Read<SvgImage>(() =>
+        {
+            if (TryDataUri(source, out var mediaType, out var data))
+                return mediaType.Contains("svg", StringComparison.OrdinalIgnoreCase) ? SvgImage.FromBytes(data) : null;
 
-        if (Remote is { } remote && Papira.Html.RemoteImages.IsRemote(source))
-            return remote.Get(source) is { } fetched && LooksLikeSvg(fetched) ? Read(() => SvgImage.FromBytes(fetched)) : null;
+            if (Remote is { Images: true } remote && Papira.Html.RemoteImages.IsRemote(source))
+                return remote.Get(source) is { } fetched && LooksLikeSvg(fetched) ? SvgImage.FromBytes(fetched) : null;
 
-        return Path(source) is { } path && path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
-            ? SvgImage.FromFile(path)
-            : null;
+            return Path(source) is { } path && path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
+                ? SvgImage.FromFile(path)
+                : null;
+        });
     }
 
     /// <summary>
     /// The picture a source refers to: a registered one, a data URI, a file, or one fetched over the
-    /// network. Null where it was to be fetched and could not be, which leaves it out of the document.
+    /// network. Null where it cannot be read, which leaves it out of the document — a picture that is
+    /// missing, broken or pointed at by an address that leads nowhere is skipped, as a browser skips it,
+    /// because the address of a picture is often data and data is often wrong.
     /// </summary>
     internal Image? LoadImage(string source)
     {
@@ -191,31 +265,30 @@ public sealed class HtmlOptions
                 throw new InvalidOperationException($"The resource '{source}' is a vector drawing, and is used where a picture is expected.");
         }
 
-        if (TryDataUri(source, out _, out var data))
-            return Image.FromBytes(data);
-
-        if (Remote is { } remote && Papira.Html.RemoteImages.IsRemote(source))
-            return remote.Get(source) is { } fetched ? Read(() => Image.FromBytes(fetched)) : null;
-
-        if (Path(source) is not { } path)
+        return Read<Image>(() =>
         {
-            throw new InvalidOperationException(
-                $"The picture '{source}' cannot be read. Papira only fetches pictures over the network once " +
-                "HtmlOptions.AllowRemoteImages says it may: give the picture as a data URI, register it with " +
-                "HtmlOptions.Resource, or point it at a local file and set HtmlOptions.BaseDirectory.");
-        }
+            if (TryDataUri(source, out _, out var data))
+                return Image.FromBytes(data);
 
-        return Image.FromFile(path);
+            if (Remote is { Images: true } remote && Papira.Html.RemoteImages.IsRemote(source))
+                return remote.Get(source) is { } fetched ? Image.FromBytes(fetched) : null;
+
+            return Path(source) is { } path ? Image.FromFile(path) : null;
+        });
     }
 
-    /// <summary>What was fetched may be anything at all, so a picture that cannot be read is left out.</summary>
-    private static T? Read<T>(Func<T> read) where T : class
+    /// <summary>
+    /// A picture may be anything at all — missing, truncated, in a format Papira does not read, or named
+    /// by an address that leads nowhere — so one that cannot be read is left out of the document.
+    /// </summary>
+    private static T? Read<T>(Func<T?> read) where T : class
     {
         try
         {
             return read();
         }
-        catch (Exception exception) when (exception is InvalidDataException or NotSupportedException or ArgumentException)
+        catch (Exception exception) when (exception is InvalidDataException or NotSupportedException or ArgumentException
+            or IOException or UnauthorizedAccessException or FormatException or InvalidOperationException)
         {
             return null;
         }

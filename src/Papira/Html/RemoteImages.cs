@@ -10,6 +10,11 @@ namespace Papira.Html;
 /// </summary>
 internal sealed class RemoteImages(TimeSpan timeout, int maximumBytes, bool allowPrivateNetworks)
 {
+    /// <summary>What the document is allowed to fetch: pictures, style sheets, or both.</summary>
+    public bool Images { get; set; }
+
+    public bool Styles { get; set; }
+
     private static readonly HttpClient Client = Create();
 
     private readonly Dictionary<string, byte[]?> _fetched = new(StringComparer.Ordinal);

@@ -64,9 +64,16 @@ internal sealed class AnchoredChild : ContainerElement
             ? Math.Max(0, box.Height - top!.Value - bottom!.Value)
             : Math.Max(box.Height, context.BodyHeight);
 
+        // Held to one side only, the element is as wide as what it holds; held to both, it spans the
+        // distance between them. This is the shrink-to-fit of CSS.
+        var previous = context.ShrinkToFit;
+        context.ShrinkToFit = !spanned;
         var plan = Child.Measure(new Size(width, height), context);
         if (!plan.HasContent)
+        {
+            context.ShrinkToFit = previous;
             return;
+        }
 
         var size = new Size(spanned ? width : plan.Width, stacked ? height : plan.Height);
         var x = left ?? (right is { } fromRight ? box.Width - fromRight - size.Width : 0);
@@ -76,6 +83,7 @@ internal sealed class AnchoredChild : ContainerElement
         canvas.Translate(x, y);
         Child.Draw(size, context);
         canvas.Translate(-x, -y);
+        context.ShrinkToFit = previous;
     }
 
     internal override SpacePlan Measure(Size available, LayoutContext context) => SpacePlan.Empty;

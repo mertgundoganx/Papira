@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 from 1.0 on, the public API only changes in a way that breaks code in a major version.
 
+## [1.4.0] - 2026-10-07
+
+The style sheets a document links to, and the markup that used to stop a document being written. Five
+real templates were laid out beside what Chrome prints from them, page by page.
+
+### Added
+
+- Style sheets the document links to (`<link rel="stylesheet">`): one beside the markup or given as a data URI is read as it stands, and one over the network once `HtmlOptions.AllowRemoteStyleSheets` says it may be.
+- `@media`: the rules of a block are read where they apply to a printed page. What `print` and `all` ask for is given to the page and what `screen` asks for is not, as a browser does when it prints, and a block that asks how wide the page is is answered with how wide it is — `HtmlOptions.PageWidth` says how wide that is, and the zoom is taken into account by itself.
+- A margin told to take whatever room is left (`margin: auto`) pushes an item of a flexible box across the line, which is how a single item is sent to one end of it.
+
+### Fixed
+
+- A picture that cannot be read is left out instead of stopping the document. A source that is empty, points at nothing, or holds something Papira cannot read is skipped, as a browser skips it — the address of a picture is often data, and data is often wrong.
+- A box wider than the space it was given overflows it, as a browser lets it, instead of being moved to a page where it would not fit either. Markup as ordinary as a box with a width of 100% and a padding stopped the document being written.
+- A box taller than the page carries on over the next one. A box of markup told how tall it is used to be moved whole to the next page, which left the rest of the page empty, and one taller than a page stopped the document altogether. A box built with the fluent API still moves as a whole, which is what someone who asks for a box of a given height means by it.
+- An item of a flexible box is held inside the smallest and the largest size it says it may be, so an item that asks for the whole line and is given a largest width takes only that.
+- An element placed against one side of its container is as wide as what it holds, which is the shrink-to-fit of CSS. A label held to a corner used to span the whole box.
+- A single line of a flexible box told how thick it is fills that thickness, so its items are placed across the box rather than across the tallest of them.
+- The rules inside a block Papira does not read — `@media screen`, `@supports`, `@keyframes` — no longer leak out of it and apply to everything.
+
+### Changed
+
+- Every public type now says what it is, so an editor has something to show for it.
+- Trimming and Native AOT are checked on every build: the samples are published as a native binary, the first trimming warning fails the build, and the binary is run to make sure the documents still come out.
+- The public API is compared with the last published version on every build, so a release cannot break the code of someone already using Papira without saying so.
+
 ## [1.3.0] - 2026-10-07
 
 What was left over from the templates a browser prints: the shadows a box casts, and lines as tall as a
@@ -149,6 +176,7 @@ First public release.
 - Deterministic output: identical input (with a fixed `CreationDate`) produces byte-identical files.
 - Hardened parsing of untrusted fonts and images: size limits, bounded decompression and validation of all offsets.
 
+[1.4.0]: https://github.com/mertgundoganx/Papira/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/mertgundoganx/Papira/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mertgundoganx/Papira/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/mertgundoganx/Papira/compare/v1.0.0...v1.1.1

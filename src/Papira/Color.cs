@@ -47,6 +47,7 @@ public static class Colors
     public static readonly Color Yellow = new(253, 216, 53);
     public static readonly Color Purple = new(142, 36, 170);
 
+    /// <summary>The greys, from the one nearest white to the one nearest black.</summary>
     public static class Grey
     {
         public static readonly Color Lighten5 = new(250, 250, 250);

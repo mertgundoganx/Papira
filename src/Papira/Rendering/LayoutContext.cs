@@ -69,6 +69,13 @@ internal sealed class LayoutContext(Canvas canvas)
     public float BodyHeight { get; set; } = float.MaxValue;
 
     /// <summary>
+    /// Set while measuring something that is only as wide as what it holds. A box placed against its
+    /// container is sized that way where nothing holds it to both sides, which is what CSS calls
+    /// shrink-to-fit: a label in a corner is as wide as its words, not as wide as the corner.
+    /// </summary>
+    public bool ShrinkToFit { get; set; }
+
+    /// <summary>
     /// The size of the whole page, which is what the viewport units of a style sheet refer to. In print
     /// a browser measures <c>vh</c> against the page box, not against a window.
     /// </summary>

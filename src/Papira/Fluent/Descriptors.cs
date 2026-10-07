@@ -3,6 +3,7 @@ using Papira.Elements;
 
 namespace Papira;
 
+/// <summary>A column being filled: its items are stacked, and it breaks over pages between them.</summary>
 public sealed class ColumnDescriptor
 {
     internal ColumnElement Element { get; } = new();
@@ -22,6 +23,10 @@ public sealed class ColumnDescriptor
     }
 }
 
+/// <summary>
+/// A row being filled: its items stand side by side, each as wide as it is told to be — a width of its
+/// own, a share of what is left over, or as wide as what it holds.
+/// </summary>
 public sealed class RowDescriptor
 {
     internal RowElement Element { get; } = new();
@@ -56,6 +61,7 @@ public sealed class RowDescriptor
 /// </summary>
 public interface ITableCellContainer : IContainer;
 
+/// <summary>What a cell of a table may say about how many columns and rows it covers.</summary>
 public static class TableExtensions
 {
     /// <summary>Makes the cell cover <paramref name="columns"/> columns (clamped to the column count).</summary>
@@ -156,6 +162,10 @@ public sealed class ListDescriptor
     }
 }
 
+/// <summary>
+/// A table being filled: its columns are defined once, its cells are added in order, and the rows of its
+/// header are repeated at the top of every page the table runs onto.
+/// </summary>
 public sealed class TableDescriptor
 {
     internal TableElement Element { get; } = new();
@@ -176,6 +186,7 @@ public sealed class TableDescriptor
     }
 }
 
+/// <summary>The columns of a table: a width of its own, a share of what is left, or as wide as its content.</summary>
 public sealed class TableColumnsDescriptor
 {
     private readonly TableElement _table;
@@ -193,6 +204,7 @@ public sealed class TableColumnsDescriptor
     public void RelativeColumn(float size = 1) => _table.Columns.Add(new TableColumn(TableColumnKind.Relative, size));
 }
 
+/// <summary>The cells of the header of a table, which are drawn again at the top of every page.</summary>
 public sealed class TableHeaderDescriptor
 {
     private readonly TableElement _table;
@@ -207,6 +219,10 @@ public sealed class TableHeaderDescriptor
     }
 }
 
+/// <summary>
+/// A piece of text being written: spans that may each have a style of their own, line breaks, links,
+/// and the number of the page the text ends up on.
+/// </summary>
 public sealed class TextDescriptor
 {
     private readonly TextElement _element;
@@ -373,6 +389,7 @@ public sealed class TextSpanDescriptor
     }
 }
 
+/// <summary>A picture that has been placed: how it is fitted into its space, and what it shows.</summary>
 public sealed class ImageDescriptor
 {
     private readonly ImageElement _element;
@@ -447,6 +464,7 @@ public sealed class SvgDescriptor
     }
 }
 
+/// <summary>A rule that has been drawn: what colour it is.</summary>
 public sealed class LineDescriptor
 {
     private readonly LineElement _element;

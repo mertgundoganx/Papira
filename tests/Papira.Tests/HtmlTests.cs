@@ -428,12 +428,14 @@ public class HtmlTests
     }
 
     [Fact]
-    public void A_picture_that_cannot_be_read_says_what_to_do()
+    public void A_picture_that_cannot_be_read_is_left_out()
     {
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            Generate(c => c.Html("<img src=\"https://example.com/logo.png\">")));
+        // The address of a picture is often data, and data is often wrong, so a picture that cannot be
+        // read is left out and the rest of the document is written all the same.
+        var pdf = Html("<p>once</p><img src=\"https://example.com/logo.png\"><img src=\"yok.png\"><p>sonra</p>");
 
-        Assert.Contains("AllowRemoteImages", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("once\nsonra\n", pdf.ExtractText());
+        Assert.DoesNotContain("/Subtype/Image", pdf.Raw, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -24,6 +24,16 @@ internal sealed class FlexItem : ContainerElement
     /// <summary>The size the item starts from along the line; null means the size of its content.</summary>
     public CssLength? Basis;
 
+    /// <summary>The smallest and largest the item may be along the line, whatever it starts from.</summary>
+    public CssLength? MinMain, MaxMain;
+
+    /// <summary>
+    /// Whether the margins the item keeps along the line are told to take whatever room is left. Such a
+    /// margin swallows the space before or after the item, which is how a single item is pushed to one
+    /// end of the line.
+    /// </summary>
+    public bool AutoBefore, AutoAfter;
+
     /// <summary>
     /// The padding and the border the item draws along the line. A size it starts from counts them in, so
     /// an item that starts from nothing is still as long as what it draws — which is what makes a row of
@@ -72,8 +82,15 @@ internal sealed class FlexElement : Element
     /// </summary>
     public bool MainSizeFixed;
 
+    /// <summary>
+    /// True when the box was told how thick it is across its direction. A single line then fills it, and
+    /// the items are placed across that rather than across what the tallest of them happens to need.
+    /// </summary>
+    public bool CrossSizeFixed;
+
     private Layout? _layout;
     private float _layoutFor = float.NaN;
+    private bool _layoutShrunk;
 
     private bool Horizontal => Direction is FlexDirection.Row or FlexDirection.RowReverse;
 
@@ -104,9 +121,25 @@ internal sealed class FlexElement : Element
         // once is kept: the parent measures before it draws, and draws in the height the measurement gave,
         // so working it out again in that smaller height would place the items somewhere else.
         var key = Horizontal ? available.Width : MainSizeFixed ? available.Height : 0;
-        if (_layout != null && Math.Abs(_layoutFor - key) < Size.Epsilon)
+        var shrink = context.ShrinkToFit;
+        if (_layout != null && _layoutShrunk == shrink && Math.Abs(_layoutFor - key) < Size.Epsilon)
             return _layout;
 
+        // What the box is placed in is as wide as the box; what the box holds is not. Only the box
+        // itself is measured against what it holds.
+        context.ShrinkToFit = false;
+        try
+        {
+            return Build(available, context, shrink, key);
+        }
+        finally
+        {
+            context.ShrinkToFit = shrink;
+        }
+    }
+
+    private Layout Build(Size available, LayoutContext context, bool shrink, float key)
+    {
         var horizontal = Horizontal;
         var mainRoom = Main(available, horizontal);
         var crossRoom = horizontal ? available.Height : available.Width;
@@ -119,11 +152,15 @@ internal sealed class FlexElement : Element
             if (item.Basis is { } basis)
             {
                 asked[i] = item.Margins + Math.Max(item.Edges, basis.Resolve(mainRoom, context.Viewport));
-                continue;
+            }
+            else
+            {
+                var plan = item.Measure(Frame(mainRoom, crossRoom), context);
+                asked[i] = plan.HasContent ? Main(new Size(plan.Width, plan.Height), horizontal) : 0;
             }
 
-            var plan = item.Measure(Frame(mainRoom, crossRoom), context);
-            asked[i] = plan.HasContent ? Main(new Size(plan.Width, plan.Height), horizontal) : 0;
+            // Whatever the item starts from, it is never smaller or larger than it says it may be.
+            asked[i] = Held(item, asked[i], mainRoom, context);
         }
 
         var layout = new Layout();
@@ -140,8 +177,9 @@ internal sealed class FlexElement : Element
                 content += asked[i];
 
             // A box as long as its content has nothing to share out, so there the line is as long as it is.
-            var lineRoom = horizontal || MainSizeFixed ? mainRoom : content;
-            var sizes = Distribute(asked, start, end, lineRoom - gaps, crossRoom, context);
+            var fills = horizontal ? !shrink : MainSizeFixed;
+            var lineRoom = fills ? mainRoom : content;
+            var sizes = Distribute(asked, start, end, lineRoom - gaps, crossRoom, mainRoom, context);
 
             // Across the line, every item is as thick as what it holds; those lined up on their text need
             // to know where that text sits, because the line has to make room above the deepest baseline.
@@ -182,10 +220,11 @@ internal sealed class FlexElement : Element
             var lineCross = Math.Max(plain, aboveBaseline + belowBaseline);
 
             // A box whose items stack downwards is as wide as it was offered, being a block like any
-            // other, and that is the width its items are placed across.
-            if (!horizontal && lines.Count == 1)
+            // other, and a box told how thick it is across is that thick. Either way a single line fills
+            // it, and that is what its items are placed across.
+            if (lines.Count == 1 && (CrossSizeFixed || (!horizontal && !shrink)))
                 lineCross = Math.Max(lineCross, crossRoom);
-            var positions = Positions(sizes, lineRoom, gap);
+            var positions = Positions(sizes, lineRoom, gap, start, end);
 
             for (var i = start; i < end; i++)
             {
@@ -217,6 +256,7 @@ internal sealed class FlexElement : Element
         layout.Cross = Math.Max(0, cross - (lines.Count > 0 ? CrossGap : 0));
         _layout = layout;
         _layoutFor = key;
+        _layoutShrunk = shrink;
         return layout;
     }
 
@@ -263,7 +303,19 @@ internal sealed class FlexElement : Element
     /// grow take it in proportion to how eagerly they want it, and items give space back in proportion to
     /// how readily they give it up and to how large they are, which is what CSS asks for.
     /// </summary>
-    private float[] Distribute(float[] asked, int start, int end, float room, float crossRoom, LayoutContext context)
+    /// <summary>The size held inside the smallest and the largest the item says it may be, margins apart.</summary>
+    private static float Held(FlexItem item, float size, float basis, LayoutContext context)
+    {
+        if (item.MinMain == null && item.MaxMain == null)
+            return size;
+
+        var viewport = context.Viewport;
+        var min = item.MinMain is { } smallest ? Math.Max(0, smallest.Resolve(basis, viewport)) : 0;
+        var max = item.MaxMain is { } largest ? Math.Max(min, largest.Resolve(basis, viewport)) : float.PositiveInfinity;
+        return item.Margins + Math.Clamp(size - item.Margins, min, max);
+    }
+
+    private float[] Distribute(float[] asked, int start, int end, float room, float crossRoom, float mainRoom, LayoutContext context)
     {
         var sizes = new float[end - start];
         float total = 0, grow = 0, shrink = 0;
@@ -283,7 +335,7 @@ internal sealed class FlexElement : Element
         if (free > 0 && grow > 0)
         {
             for (var i = start; i < end; i++)
-                sizes[i - start] += free * Items[i].Grow / grow;
+                sizes[i - start] = Held(Items[i], sizes[i - start] + (free * Items[i].Grow / grow), mainRoom, context);
 
             return sizes;
         }
@@ -293,7 +345,7 @@ internal sealed class FlexElement : Element
             for (var i = start; i < end; i++)
             {
                 var share = Items[i].Shrink * asked[i] / shrink;
-                sizes[i - start] = Math.Max(0, asked[i] + (free * share));
+                sizes[i - start] = Held(Items[i], Math.Max(0, asked[i] + (free * share)), mainRoom, context);
             }
 
             // An item cannot be shrunk below what its content needs, so what it keeps is given back.
@@ -312,7 +364,7 @@ internal sealed class FlexElement : Element
     }
 
     /// <summary>Where each item of a line starts, once the space left over has been placed around them.</summary>
-    private float[] Positions(float[] sizes, float room, float gap)
+    private float[] Positions(float[] sizes, float room, float gap, int start, int end)
     {
         float used = gap * Math.Max(0, sizes.Length - 1);
         foreach (var size in sizes)
@@ -320,6 +372,32 @@ internal sealed class FlexElement : Element
 
         var free = Math.Max(0, room - used);
         var count = sizes.Length;
+
+        // A margin told to take whatever room is left takes it before anything else is shared out, which
+        // is how an item is pushed to one end of the line.
+        var hungry = 0;
+        for (var i = start; i < end; i++)
+            hungry += (Items[i].AutoBefore ? 1 : 0) + (Items[i].AutoAfter ? 1 : 0);
+
+        if (hungry > 0)
+        {
+            var share = free / hungry;
+            var positions = new float[count];
+            float offset = 0;
+            for (var i = start; i < end; i++)
+            {
+                if (Items[i].AutoBefore)
+                    offset += share;
+
+                positions[i - start] = offset;
+                offset += sizes[i - start] + gap;
+                if (Items[i].AutoAfter)
+                    offset += share;
+            }
+
+            return positions;
+        }
+
         var (leading, between) = Justify switch
         {
             FlexJustify.Center => (free / 2, 0f),
@@ -330,15 +408,15 @@ internal sealed class FlexElement : Element
             _ => (0f, 0f),
         };
 
-        var positions = new float[count];
-        var offset = leading;
+        var placed = new float[count];
+        var at = leading;
         for (var i = 0; i < count; i++)
         {
-            positions[i] = offset;
-            offset += sizes[i] + gap + between;
+            placed[i] = at;
+            at += sizes[i] + gap + between;
         }
 
-        return positions;
+        return placed;
     }
 
     internal override SpacePlan Measure(Size available, LayoutContext context)
@@ -398,6 +476,7 @@ internal sealed class FlexElement : Element
     internal override void Reset()
     {
         _layout = null;
+        _layoutFor = float.NaN;
         foreach (var item in Items)
             item.Reset();
     }
