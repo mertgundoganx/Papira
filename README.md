@@ -1,20 +1,15 @@
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/mertgundoganx/Papira/main/assets/icon.png" width="110" alt="">
+![Papira](https://raw.githubusercontent.com/mertgundoganx/Papira/main/assets/logo.png)
 
 # Papira
 
-**Fast, free, dependency-free PDF generation for .NET**
+**Fast, free, dependency-free PDF generation for .NET** — no browser, no native libraries, no
+third-party packages. Just C#.
 
 [![CI](https://github.com/mertgundoganx/Papira/actions/workflows/ci.yml/badge.svg)](https://github.com/mertgundoganx/Papira/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/Papira.svg)](https://www.nuget.org/packages/Papira)
 [![Downloads](https://img.shields.io/nuget/dt/Papira.svg)](https://www.nuget.org/packages/Papira)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/mertgundoganx/Papira/blob/main/LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%2010.0-512BD4)](https://dotnet.microsoft.com/)
-
-*No browser. No native libraries. No third-party packages. Just C#.*
-
-</div>
 
 ---
 
@@ -30,6 +25,11 @@ Document.Create(document => document.Page(page =>
 }))
 .GeneratePdf("hello.pdf");
 ```
+
+![Three documents made with Papira](https://raw.githubusercontent.com/mertgundoganx/Papira/main/assets/samples.png)
+
+*An invoice written in C#, a report laid out from an HTML template, and a fillable form — all three come
+out of [the samples in this repository](#-samples).*
 
 ## ✨ What you get
 
@@ -85,7 +85,7 @@ And how far the output has been checked against something else:
 
 **Text** · [Right-to-left and cursive](#-right-to-left-and-cursive-text) · [Scripts of India](#-scripts-of-india) · [Colour emoji](#-colour-emoji) · [Fonts](#-fonts)
 
-**Running it** · [In production](#-in-production) · [Performance tips](#-performance-tips) · [Samples](#-samples) · [Limitations](#-limitations)
+**Running it** · [Is Papira right for you?](#-is-papira-right-for-you) · [In production](#-in-production) · [Performance tips](#-performance-tips) · [Samples](#-samples) · [Limitations](#-limitations)
 
 ## 📦 Installation
 
@@ -688,6 +688,18 @@ dotnet run -c Release --project samples/Papira.Samples -- form
 dotnet run -c Release --project samples/Papira.Samples -- html
 dotnet run -c Release --project samples/Papira.Samples -- bench 5000
 ```
+
+## 🧭 Is Papira right for you?
+
+**Reach for it when** you produce documents from your own data — invoices, reports, statements, labels,
+tickets — and want them to come out the same on every machine, including a container with nothing
+installed. When a browser in your image is a cost you would rather not pay. When the file has to be
+archivable or accessible. When you already have HTML templates and would rather keep them than rewrite
+them. When you need a licence with no conditions attached.
+
+**Look elsewhere when** you need to read, edit or merge PDFs that already exist — Papira only writes
+them. When you need a whole browser: JavaScript, floats, canvas, a page that measures itself. When you
+need a designer your colleagues can drag boxes around in.
 
 ## 🚧 Limitations
 

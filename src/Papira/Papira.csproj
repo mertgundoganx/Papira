@@ -13,11 +13,11 @@
 
   <PropertyGroup Label="Package">
     <PackageId>Papira</PackageId>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <Authors>Mert Gundogan</Authors>
     <Copyright>Copyright (c) 2026 Mert Gundogan</Copyright>
-    <Description>Fast, free, dependency-free PDF generation for .NET. Fluent layout API with automatic pagination, tables, TrueType font embedding with subsetting, PNG/JPEG images and a multi-core output pipeline. No browser, no native libraries.</Description>
-    <PackageTags>pdf;pdf-generation;pdf-library;report;invoice;document;layout;fluent</PackageTags>
+    <Description>Fast, free, dependency-free PDF generation for .NET — from C# or from the HTML templates you already have. Fluent layout with automatic pagination and tables; HTML and CSS templates with flexbox, grid and style sheets, laid out within a point of what a browser prints; PDF/A archiving and PDF/UA accessible output; fillable forms; digital signatures; AES-256 encryption; QR codes and barcodes; SVG; images; right-to-left, Indic and colour-emoji text. No browser, no native libraries, no third-party packages. Trimming and Native AOT compatible. MIT licensed, commercial use included.</Description>
+    <PackageTags>pdf;pdf-generation;pdf-library;html-to-pdf;html;css;report;reporting;invoice;document;layout;fluent;pdfa;pdf-ua;accessibility;forms;signature;encryption;qrcode;barcode;svg;unicode;rtl;aot;nativeaot;trimming</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/mertgundoganx/Papira</PackageProjectUrl>
     <RepositoryUrl>https://github.com/mertgundoganx/Papira</RepositoryUrl>
@@ -31,7 +31,7 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EnablePackageValidation>true</EnablePackageValidation>
     <!-- Fails the build if the public API of the last release is broken. -->
-    <PackageValidationBaselineVersion>1.3.0</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion>1.4.0</PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <ItemGroup>
