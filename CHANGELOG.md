@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 from 1.0 on, the public API only changes in a way that breaks code in a major version.
 
+## [1.4.2] - 2026-10-07
+
+### Changed
+
+- The sample documents are written in English, like everything else a newcomer reads. The one that shows every script Papira can draw keeps its Turkish, Arabic and Devanagari, which is the point of it.
+- The readme shows what Papira produces at a size you can read it at: an invoice written in C# beside a report laid out from an HTML template, and the fillable form where forms are explained.
+- The public API is now checked against the first release of this major line rather than the last one published, so the check cannot fail on a version that nuget.org has not finished indexing.
+
 ## [1.4.1] - 2026-10-07
 
 ### Changed
@@ -186,6 +194,7 @@ First public release.
 - Deterministic output: identical input (with a fixed `CreationDate`) produces byte-identical files.
 - Hardened parsing of untrusted fonts and images: size limits, bounded decompression and validation of all offsets.
 
+[1.4.2]: https://github.com/mertgundoganx/Papira/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/mertgundoganx/Papira/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/mertgundoganx/Papira/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/mertgundoganx/Papira/compare/v1.2.0...v1.3.0

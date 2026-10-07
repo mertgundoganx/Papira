@@ -26,10 +26,10 @@ Document.Create(document => document.Page(page =>
 .GeneratePdf("hello.pdf");
 ```
 
-![Three documents made with Papira](https://raw.githubusercontent.com/mertgundoganx/Papira/main/assets/samples.png)
+![An invoice and a report made with Papira](https://raw.githubusercontent.com/mertgundoganx/Papira/main/assets/samples.png)
 
-*An invoice written in C#, a report laid out from an HTML template, and a fillable form — all three come
-out of [the samples in this repository](#-samples).*
+*The two ways round: an invoice written in C#, and a report laid out from an HTML template. Both come out
+of [the samples in this repository](#-samples).*
 
 ## ✨ What you get
 
@@ -219,6 +219,8 @@ container.Height(40).Barcode("PAP-2026-000123");               // Code 128
 QR codes use the smallest version that fits and the best mask, and include the quiet zone needed for scanning. The encoder is verified by decoding its output with an independent reader.
 
 ### 🧾 Fillable forms
+
+![A fillable form made with Papira](https://raw.githubusercontent.com/mertgundoganx/Papira/main/assets/sample-form.png)
 
 ```csharp
 container.TextField("name").Tooltip("Your full name").Required();

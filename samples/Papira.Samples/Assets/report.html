@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Çeyrek Raporu</title>
+  <title>Quarterly Report</title>
   <style>
     body { color: #23272f; }
     h1 { font-size: 24pt; color: #1a3a6b; margin-bottom: 2pt; }
@@ -20,7 +20,7 @@
     /* The layouts a template is written in: a header laid out as a flexible box, figures in a grid,
        a label placed against the picture it belongs to. */
     * { box-sizing: border-box; }
-    header { display: flex; justify-content: space-between; align-items: baseline;
+    header { display: flex; justify-content: space-between; align-items: center;
              border-bottom: 2pt solid #1a3a6b; padding-bottom: 4pt; }
     header .when { color: #5b6472; font-size: 10pt; }
     .figures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10pt; margin: 12pt 0; }
@@ -30,64 +30,64 @@
                      font-variant-numeric: tabular-nums; }
     .tags .tag { display: inline-block; background: #eef1f7; border-radius: 8pt;
                  padding: 1pt 7pt; margin-right: 4pt; }
-    .stage { position: relative; width: 100%; max-width: 160pt; margin: 6pt auto; }
-    .stage img { width: 100%; }
-    .stage .pin { position: absolute; left: calc(50% - 6pt); top: -6pt; background: #1a3a6b;
-                  color: #ffffff; font-size: 8pt; border-radius: 6pt; padding: 0 5pt; }
+    .stage { position: relative; width: 56pt; }
+    .stage img { width: 100%; display: block; }
+    .stage .pin { position: absolute; right: -4pt; top: -4pt; background: #1a3a6b;
+                  color: #ffffff; font-size: 7pt; border-radius: 6pt; padding: 0 5pt; }
     tbody tr:nth-child(even) td { background: #fafbfd; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Çeyrek Raporu</h1>
-    <div class="when">2026 üçüncü çeyrek</div>
+    <div>
+      <h1>Quarterly Report</h1>
+      <div class="when">Third quarter, 2026</div>
+    </div>
+    <div class="stage">
+      <img src="logo.svg" alt="The Papira logo">
+      <span class="pin">new</span>
+    </div>
   </header>
-  <p class="lead">Papira A.Ş.</p>
+  <p class="lead">Papira Software Ltd.</p>
 
   <div class="figures">
-    <div class="figure"><div class="label">Gelir</div><div class="value">1.490.000</div></div>
-    <div class="figure"><div class="label">Gider</div><div class="value">640.000</div></div>
-    <div class="figure"><div class="label">Fark</div><div class="value">850.000</div></div>
+    <div class="figure"><div class="label">Revenue</div><div class="value">1,490,000</div></div>
+    <div class="figure"><div class="label">Costs</div><div class="value">640,000</div></div>
+    <div class="figure"><div class="label">Margin</div><div class="value">850,000</div></div>
   </div>
 
-  <p class="tags"><span class="tag">danışmanlık</span><span class="tag">yazılım</span><span class="tag">bakım</span></p>
+  <p class="tags"><span class="tag">consulting</span><span class="tag">software</span><span class="tag">support</span></p>
 
-  <p>Bu sayfa, bir HTML şablonundan üretilmiştir. Başlıklar, paragraflar, listeler, tablolar,
-     görseller ve bağlantılar olduğu gibi yerleşir; belge
-     <a href="https://github.com/mertgundoganx/Papira">Papira</a> ile tek geçişte oluşturulur.</p>
+  <p>This page was laid out from an HTML template. Headings, paragraphs, lists, tables, pictures and
+     links come out as they are written, and the document is produced in one pass by
+     <a href="https://github.com/mertgundoganx/Papira">Papira</a> — with no browser involved.</p>
 
   <div class="card">
-    <strong>Özet:</strong> Gelir bir önceki çeyreğe göre <b>%18</b> arttı, gider ise
-    <b>%4</b> geriledi. Ayrıntılar aşağıdaki tabloda.
+    <strong>In short:</strong> revenue is up <b>18%</b> on the quarter before, and costs are down
+    <b>4%</b>. The table below has the detail.
   </div>
 
-  <h2>Kalemler</h2>
+  <h2>Lines</h2>
   <table>
     <thead>
-      <tr><th>Kalem</th><th class="num" width="90">Gelir</th><th class="num" width="90">Gider</th></tr>
+      <tr><th>Line</th><th class="num" width="90">Revenue</th><th class="num" width="90">Costs</th></tr>
     </thead>
     <tbody>
-      <tr><td>Danışmanlık</td><td class="num">420.000</td><td class="num">180.000</td></tr>
-      <tr><td>Yazılım geliştirme</td><td class="num">860.000</td><td class="num">390.000</td></tr>
-      <tr><td>Bakım ve destek</td><td class="num">210.000</td><td class="num">70.000</td></tr>
-      <tr class="total"><td>Toplam</td><td class="num">1.490.000</td><td class="num">640.000</td></tr>
+      <tr><td>Consulting</td><td class="num">420,000</td><td class="num">180,000</td></tr>
+      <tr><td>Software development</td><td class="num">860,000</td><td class="num">390,000</td></tr>
+      <tr><td>Support and maintenance</td><td class="num">210,000</td><td class="num">70,000</td></tr>
+      <tr class="total"><td>Total</td><td class="num">1,490,000</td><td class="num">640,000</td></tr>
     </tbody>
   </table>
-  <p class="note">Tutarlar Türk lirasıdır ve KDV hariçtir.</p>
+  <p class="note">Amounts exclude VAT.</p>
 
-  <h2>Öne çıkanlar</h2>
+  <h2>Highlights</h2>
   <ul>
-    <li>Üç yeni müşteriyle <em>yıllık</em> sözleşme imzalandı.</li>
-    <li>Ortalama belge üretim süresi <b>0,7 ms</b>'ye indi.</li>
-    <li>Erişilebilirlik denetimi PDF/UA-1 ile doğrulandı.</li>
+    <li>Three new customers signed a <em>yearly</em> contract.</li>
+    <li>The average document now takes <b>0.7 ms</b> to produce.</li>
+    <li>Accessibility was checked against PDF/UA-1.</li>
   </ul>
 
-  <h2>Logo</h2>
-  <div class="stage">
-    <img src="logo.svg" alt="Papira logosu">
-    <span class="pin">yeni</span>
-  </div>
-
-  <p class="note">Bu belge Papira'nın HTML desteğiyle üretilmiştir.</p>
+  <p class="note">This document was produced from markup by Papira.</p>
 </body>
 </html>

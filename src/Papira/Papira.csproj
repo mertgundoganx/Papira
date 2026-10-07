@@ -13,7 +13,7 @@
 
   <PropertyGroup Label="Package">
     <PackageId>Papira</PackageId>
-    <Version>1.4.1</Version>
+    <Version>1.4.2</Version>
     <Authors>Mert Gundogan</Authors>
     <Copyright>Copyright (c) 2026 Mert Gundogan</Copyright>
     <Description>Fast, free, dependency-free PDF generation for .NET — from C# or from the HTML templates you already have. Fluent layout with automatic pagination and tables; HTML and CSS templates with flexbox, grid and style sheets, laid out within a point of what a browser prints; PDF/A archiving and PDF/UA accessible output; fillable forms; digital signatures; AES-256 encryption; QR codes and barcodes; SVG; images; right-to-left, Indic and colour-emoji text. No browser, no native libraries, no third-party packages. Trimming and Native AOT compatible. MIT licensed, commercial use included.</Description>
@@ -30,8 +30,12 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EnablePackageValidation>true</EnablePackageValidation>
-    <!-- Fails the build if the public API of the last release is broken. -->
-    <PackageValidationBaselineVersion>1.4.0</PackageValidationBaselineVersion>
+    <!--
+      Fails the build if the public API is no longer compatible with the first release of this major
+      line. A version just published is not restorable for a few minutes, so the baseline is the oldest
+      version 1.x promises to keep working with rather than the newest one.
+    -->
+    <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <ItemGroup>
