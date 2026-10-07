@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 from 1.0 on, the public API only changes in a way that breaks code in a major version.
 
+## [1.4.1] - 2026-10-07
+
+### Changed
+
+- The package now says what it has become: its description and its tags were still those of 1.0.0, and said nothing of HTML templates, PDF/A, accessible output, forms, signatures or Native AOT. The readme shows what Papira produces, and says plainly what it is not for.
+
+### Fixed
+
+- The top of the readme came out as text on nuget.org. It was written with a little HTML to centre the name and the logo, which GitHub honours and nuget.org, which allows no HTML in a readme, printed as it stood. The whole readme is Markdown now, and the page reads the same in both places.
+
 ## [1.4.0] - 2026-10-07
 
 The style sheets a document links to, and the markup that used to stop a document being written. Five
@@ -176,6 +186,7 @@ First public release.
 - Deterministic output: identical input (with a fixed `CreationDate`) produces byte-identical files.
 - Hardened parsing of untrusted fonts and images: size limits, bounded decompression and validation of all offsets.
 
+[1.4.1]: https://github.com/mertgundoganx/Papira/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/mertgundoganx/Papira/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/mertgundoganx/Papira/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mertgundoganx/Papira/compare/v1.1.1...v1.2.0
